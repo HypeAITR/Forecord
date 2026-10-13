@@ -41,10 +41,17 @@ Uygulama; doğrudan grafik birimi üzerinden ekran yakalama (DXGI Desktop Duplic
 | Bileşen | Gereksinim |
 |---|---|
 | **İşletim Sistemi** | Windows 10 (Sürüm 2004 / Yapı 19041 veya üzeri) ya da Windows 11 (x64) |
-| **.NET SDK / Runtime** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
-| **FFmpeg** | `ffmpeg.exe` (uygulama dizininde veya sistem `PATH` ortam değişkeninde tanımlı) |
+| **.NET SDK (Yalnızca Kaynaktan Derleme İçin)** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
+| **FFmpeg** | `ffmpeg.exe` (tam sürüm paketinde dahildir; tekil `.exe` kullanımında uygulama dizininde veya `PATH` içinde bulunmalıdır) |
 
-### Kurulum ve Derleme
+### Hazır Çalıştırılabilir Sürüm (Kurulumsuz Kullanım)
+
+Kaynak koddan derleme yapmadan doğrudan kullanmak için **[Releases](https://github.com/HypeAITR/Forecord/releases/latest)** sayfasından hazır paketleri indirebilirsiniz:
+
+- **`Forecord-v1.0.0-win-x64.zip` (Tam Paket):** Bağımsız (self-contained) `Forecord.exe` ve `ffmpeg.exe` dosyalarını bir arada içerir. Ek bir `.NET Runtime` veya `FFmpeg` kurulumu gerektirmez; arşivi çıkartıp `Forecord.exe` dosyasını çalıştırmanız yeterlidir.
+- **`Forecord.exe` (Tek Dosyalı Uygulama):** Sisteminde `ffmpeg.exe` zaten `PATH` ortam değişkeninde tanımlı olan kullanıcılar için tek dosyalı çalıştırılabilir sürüm.
+
+### Kaynak Koddan Kurulum ve Derleme
 
 #### 1. Kaynak Kodun İndirilmesi
 ```powershell
@@ -157,10 +164,17 @@ The application integrates GPU-based desktop capture (DXGI Desktop Duplication),
 | Component | Requirement |
 |---|---|
 | **Operating System** | Windows 10 (Version 2004 / Build 19041 or later) or Windows 11 (x64) |
-| **.NET SDK / Runtime** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
-| **FFmpeg** | `ffmpeg.exe` (placed in the application directory or available in the system `PATH`) |
+| **.NET SDK (Source Build Only)** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
+| **FFmpeg** | `ffmpeg.exe` (bundled in the full release archive; required in the app directory or system `PATH` for standalone `.exe` usage) |
 
-### Installation and Build
+### Prebuilt Binaries (No Installation Required)
+
+To run the application without building from source, download the prebuilt packages from the **[Releases](https://github.com/HypeAITR/Forecord/releases/latest)** page:
+
+- **`Forecord-v1.0.0-win-x64.zip` (Full Bundle):** Contains the self-contained `Forecord.exe` executable and `ffmpeg.exe`. Requires no external `.NET Runtime` or `FFmpeg` installation; extract the archive and run `Forecord.exe`.
+- **`Forecord.exe` (Standalone Single-File Executable):** Self-contained single-file executable for systems where `ffmpeg.exe` is already configured in the system `PATH`.
+
+### Building from Source
 
 #### 1. Clone the Repository
 ```powershell
