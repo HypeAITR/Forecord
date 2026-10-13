@@ -1,86 +1,79 @@
-# Forecord — Hafif, Yüksek Kaliteli Ekran Kaydedici
+# Forecord
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/download/dotnet/8.0)
-[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11%20(x64)-0078D6)](#gereksinimler)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11%20(x64)-0078D6)](#sistem-gereksinimleri)
 
-**Forecord**, karmaşık yayıncı ayarlarıyla uğraşmadan **tek tıkla, yüksek kalitede ve sistem performansını düşürmeden** ekran kaydı almak isteyen geliştiriciler, eğitmenler, öğrenciler ve içerik üreticileri için geliştirilmiş açık kaynaklı bir Windows ekran kaydedicisidir.
-
-OBS Studio gibi ağır yayın araçlarına alternatif olarak; doğrudan masaüstü yakalama, canlı ekran üstü çizim (annotation), kayıtta görünmeyen kontrol paneli ve donanım hızlandırmalı kodlama özelliklerini sade bir arayüzde birleştirir.
+**[Türkçe](#türkçe)** | **[English](#english)**
 
 ---
 
-## ✨ Öne Çıkan Özellikler
+## Türkçe
 
-- **🚀 Düşük Ek Yük (Low-Overhead) Yakalama:**
-  - **DXGI Desktop Duplication API** (Direct3D 11) ile doğrudan GPU üzerinden düşük gecikmeli ekran yakalama.
-  - Değişmeyen (idle) kareleri atlayan **gerçek zamanlı VFR (Variable Frame Rate)** ve **Dirty-Rect / Move-Rect** kısmi okuma optimizasyonu.
-  - Pil durumu ve sistem yüküne göre dinamik kare hızı/preset uyarlaması (**Adaptive Performance Scaling**).
-- **🎬 Donanım Hızlandırmalı Kodlama:**
-  - Otomatik donanım kodlayıcı tespiti: **NVIDIA NVENC (`h264_nvenc`)** → **AMD AMF (`h264_amf`)** → **Intel QSV (`h264_qsv`)** → **CPU (`libx264`)**.
-  - Doğrudan D3D11 GPU dokusu üzerinden kodlama (`NvencGpuEncoder` / `AmfGpuEncoder`) ve yerleşik MP4 paketleme (`H264Mp4Muxer`) altyapısı.
-  - **30 / 60 / 120 FPS** ve **Native / 1080p / 1440p / 4K** çözünürlük seçenekleri.
-- **🔊 Canlı Ses Kaydı ve Senkronizasyon (Live Audio Muxing):**
-  - **WASAPI** üzerinden mikrofon ve sistem sesini (loopback) eşzamanlı kaydetme.
-  - Adlandırılmış borular (Named Pipes) ile kayıt esnasında gerçek zamanlı ses-video birleştirme (kayıt bittiğinde uzun bekleme sürelerini ortadan kaldırır).
-  - Kayıt sırasında yüzen panelden mikrofonu anlık açıp kapatabilme.
-- **👻 Kayıtta Görünmeyen Yüzen Kontrol Paneli:**
-  - Windows `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` API'si sayesinde kontrol paneli ekranın üst kısmında durur ancak **kaydedilen videoda görünmez**.
-- **✏️ Canlı Ekran Üstü Çizim (Annotation Overlay):**
-  - Kayıt sırasında ekranın herhangi bir yerine **Kalem**, **Ok** ve **Silgi** araçlarıyla çizim yapabilme.
-  - Çizim aracı kapatıldığında (veya `Esc` tuşuna basıldığında) çizimler ekranda kalmaya devam ederken arka plandaki uygulamalarla normal şekilde çalışmaya devam edebilme (click-through).
-- **📸 Sıfır Maliyetli Ekran Görüntüsü (Lazy Screenshot):**
-  - Kayıt devam ederken tek tuşla (`Ctrl+Alt+S`) imleçsiz, ham masaüstü karesinden anında PNG ekran görüntüsü alma.
-- **⏸️ Kesintisiz Duraklat / Devam Et:**
-  - Duraklatılan süreler videoya siyah kare veya boşluk olarak yansımaz; segmentler otomatik ve akıcı biçimde birleştirilir.
+### Genel Bakış
 
----
+**Forecord**, Windows 10 ve Windows 11 sistemler için `.NET 8` ve `WPF` tabanlı olarak geliştirilmiş açık kaynaklı bir masaüstü ekran kayıt uygulamasıdır. Karmaşık yayın yazılımlarına ihtiyaç duymadan, düşük sistem kaynağı kullanımıyla yüksek kaliteli ekran ve ses kaydı alınmasını sağlamak amacıyla tasarlanmıştır.
 
-## 🖥️ Gereksinimler
+Uygulama; doğrudan grafik birimi üzerinden ekran yakalama (DXGI Desktop Duplication), donanım hızlandırmalı video kodlama, gerçek zamanlı ses-görüntü birleştirme (muxing) ve kayıt esnasında ekran üstü işaretleme (annotation) işlevlerini tek bir arayüzde sunar.
+
+### Teknik Özellikler
+
+- **Masaüstü Yakalama Mimarisi**
+  - Direct3D 11 ve **DXGI Desktop Duplication API** üzerinden düşük gecikmeli ekran yakalama.
+  - Değişmeyen karelerin yeniden işlenmesini önleyen **Değişken Kare Hızı (VFR)** zamanlaması ve **Dirty-Rect / Move-Rect** kısmi bellek okuma mekanizması.
+  - Sistem yükü ve güç durumuna (pil/adaptör) göre kare hızı ve kodlayıcı profilini dinamik olarak uyarlayan performans yönetimi.
+- **Video Kodlama ve Paketleme**
+  - Donanım kodlayıcı desteği ve otomatik önceliklendirme: **NVIDIA NVENC (`h264_nvenc`)**, **AMD AMF (`h264_amf`)**, **Intel QSV (`h264_qsv`)** ve yazılım tabanlı **CPU (`libx264`)** geri dönüşü (fallback).
+  - Doğrudan D3D11 GPU dokusu üzerinden kodlama (`NvencGpuEncoder`, `AmfGpuEncoder`) ve yerleşik MP4 konteyner paketleme (`H264Mp4Muxer`) katmanı.
+  - 30, 60 ve 120 FPS kare hızı ile Native, 1080p, 1440p ve 4K çıkış çözünürlüğü desteği.
+- **Ses Yakalama ve Senkronizasyon**
+  - **WASAPI** aracılığıyla mikrofon ve sistem sesinin (loopback) eşzamanlı kaydı.
+  - Adlandırılmış borular (Named Pipes) üzerinden kayıt sırasında gerçek zamanlı ses ve video birleştirme.
+  - Kayıt devam ederken ses kaynaklarını açıp kapatabilme ve segment bazlı kesintisiz geçiş.
+- **Kayıt Kontrolü ve Ekran Üstü İşaretleme (Annotation)**
+  - `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` API desteği ile masaüstünde görünür olduğu halde kayıt çıktısında yer almayan yüzen kontrol paneli.
+  - Kayıt esnasında ekran üzerinde kalem, ok ve silgi araçlarıyla çizim yapılmasını sağlayan şeffaf katman; araç devre dışı bırakıldığında arka plan uygulamalarıyla etkileşimi engellemeyen tıklama-geçirgen (click-through) yapı.
+  - Kayıt sırasında yalnızca talep edildiğinde bellekte örneklenen (lazy snapshot) imleçsiz PNG ekran görüntüsü alma işlevi.
+  - Duraklatma ve devam ettirme işlemlerinde segmentlerin otomatik olarak tek bir MP4 dosyasında birleştirilmesi.
+
+### Sistem Gereksinimleri
 
 | Bileşen | Gereksinim |
 |---|---|
-| **İşletim Sistemi** | Windows 10 (2004 / Build 19041+) veya Windows 11 (x64) |
+| **İşletim Sistemi** | Windows 10 (Sürüm 2004 / Yapı 19041 veya üzeri) ya da Windows 11 (x64) |
 | **.NET SDK / Runtime** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
-| **FFmpeg** | `ffmpeg.exe` (uygulama dizininde veya sistem `PATH` ortam değişkeninde) |
+| **FFmpeg** | `ffmpeg.exe` (uygulama dizininde veya sistem `PATH` ortam değişkeninde tanımlı) |
 
----
+### Kurulum ve Derleme
 
-## 🛠️ Kurulum ve Derleme
-
-### 1. Depoyu Klonlayın
+#### 1. Kaynak Kodun İndirilmesi
 ```powershell
 git clone https://github.com/HypeAITR/Forecord.git
 cd Forecord
 ```
 
-### 2. FFmpeg'i Ekleyin
-[Gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/) veya resmi FFmpeg dağıtımlarından indirdiğiniz `ffmpeg.exe` dosyasını:
-- Doğrudan `ScreenRecorder/` proje klasörüne (veya derleme çıktı klasörüne) koyabilir, **veya**
-- Sistem `PATH` ortam değişkeninize ekleyebilirsiniz.
+#### 2. FFmpeg Bağımlılığının Tanımlanması
+Resmi FFmpeg dağıtımlarından ([Gyan.dev](https://www.gyan.dev/ffmpeg/builds/) vb.) temin edilen `ffmpeg.exe` ikili dosyası aşağıdaki yöntemlerden biriyle tanımlanmalıdır:
+- `ScreenRecorder/` proje dizinine (veya derleme çıktı dizinine) kopyalanması,
+- Sistem `PATH` ortam değişkenine eklenmesi.
 
-### 3. Derleyin ve Çalıştırın
+#### 3. Derleme ve Çalıştırma
 ```powershell
 cd ScreenRecorder
 
-# Bağımlılıkları yükle ve Release modunda derle
 dotnet restore
 dotnet build -c Release
-
-# Uygulamayı çalıştır
 dotnet run -c Release
 ```
 
-### Tek Dosyalı Çalıştırılabilir (`.exe`) Üretme
+#### Bağımsız Çalıştırılabilir Dosya (Single-File Executable) Üretimi
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
 ```
 
----
+### Varsayılan Klavye Kısayolları
 
-## ⌨️ Varsayılan Kısayollar
-
- Tüm kısayollar uygulama içindeki **⚙ Ayarlar** menüsünden özelleştirilebilir:
+Kısayol tanımları uygulama içerisindeki **Ayarlar** penceresinden değiştirilebilir.
 
 | İşlev | Varsayılan Kısayol |
 |---|---|
@@ -89,45 +82,158 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | Mikrofon Aç / Kapat | `Ctrl + Alt + M` |
 | Ekran Görüntüsü Al (Kayıt Sırasında) | `Ctrl + Alt + S` |
 
-### Çizim Modu Kısayolları (Çizim Araç Çubuğu Açıkken)
+**Çizim Katmanı Kısayolları (Çizim modu aktifken):**
+
 | İşlev | Kısayol |
 |---|---|
 | Kalem Aracı | `D` |
 | Silgi Aracı | `E` |
-| Son Çizimi Geri Al | `Ctrl + Z` |
+| Son İşlemi Geri Al | `Ctrl + Z` |
 | Tüm Çizimleri Temizle | `C` |
-| Çizim Aracını Bırak (Masaüstü Tıklamasına Dön) | `Esc` |
+| Çizim Aracını Devre Dışı Bırak (Masaüstü Etkileşimine Dön) | `Esc` |
 
----
-
-## 📂 Proje Yapısı
+### Dizin Yapısı
 
 ```text
 Forecord/
 └── ScreenRecorder/
-    ├── ScreenRecorder.csproj        # .NET 8 WPF proje tanımı (SharpDX & NAudio)
-    ├── App.xaml / App.xaml.cs       # Uygulama başlangıcı ve global koyu tema
-    ├── MainWindow.xaml(.cs)         # Ana kontrol penceresi
+    ├── ScreenRecorder.csproj        # Proje yapılandırması ve paket bağımlılıkları
+    ├── App.xaml / App.xaml.cs       # Uygulama yaşam döngüsü ve stil tanımları
+    ├── MainWindow.xaml(.cs)         # Ana yönetim penceresi
     ├── Helpers/
-    │   └── DesktopCapture.cs        # DXGI Desktop Duplication, dirty-rect ve imleç birleştirme
-    ├── Models/                      # Ayar, ses cihazı, yakalama modu ve durum modelleri
+    │   └── DesktopCapture.cs        # DXGI Desktop Duplication, dirty-rect ve imleç işleme
+    ├── Models/                      # Veri modelleri ve durum tanımları
     ├── Services/
-    │   ├── RecordingService.cs      # Kayıt döngüsü, VFR zamanlama, adaptif ölçekleme, segment yönetimi
-    │   ├── EncoderService.cs        # FFmpeg süreç yönetimi, donanım kodlayıcı tespiti, canlı muxing
-    │   ├── AudioService.cs          # WASAPI mikrofon & sistem sesi yakalama ve Named Pipe akışı
-    │   ├── SothelCaptureEngine.cs   # DWM/DXGI yakalama oturumu ve telemetri yönetimi
-    │   ├── HotkeyService.cs         # Global Win32 klavye kısayolları
-    │   ├── SettingsService.cs       # JSON tabanlı kullanıcı ayarları (%AppData%\Forecord)
-    │   ├── FileService.cs           # Çıktı ve geçici segment dosyası yönetimi
-    │   ├── GpuEncoding/             # Doğrudan NVIDIA NVENC ve AMD AMF D3D11 kodlayıcı katmanı
-    │   └── Muxing/                  # H.264 Annex-B -> MP4 paketleyici (H264Mp4Muxer)
-    ├── ViewModels/                  # MVVM görünüm modelleri (Main, Settings, DrawingTool)
-    ├── Views/                       # Yüzen panel, çizim katmanı, ayarlar ve bildirim pencereleri
-    └── Effects/ & Shaders/          # WPF HLSL piksel shader arka plan efektleri
+    │   ├── RecordingService.cs      # Kayıt akışı, VFR zamanlama ve segment yönetimi
+    │   ├── EncoderService.cs        # FFmpeg süreç yönetimi, donanım kodlayıcı tespiti ve muxing
+    │   ├── AudioService.cs          # WASAPI ses yakalama ve Named Pipe veri akışı
+    │   ├── SothelCaptureEngine.cs   # Yakalama oturumu ve telemetri yönetimi
+    │   ├── HotkeyService.cs         # Win32 global klavye kısayolu yönetimi
+    │   ├── SettingsService.cs       # Kullanıcı yapılandırma yönetimi (%AppData%\Forecord)
+    │   ├── FileService.cs           # Çıktı ve geçici dosya yönetimi
+    │   ├── GpuEncoding/             # Doğrudan NVIDIA NVENC ve AMD AMF D3D11 kodlama katmanı
+    │   └── Muxing/                  # H.264 Annex-B -> MP4 paketleme modülü (H264Mp4Muxer)
+    ├── ViewModels/                  # MVVM görünüm modelleri
+    ├── Views/                       # Kullanıcı arayüzü pencereleri ve çizim katmanı bileşenleri
+    └── Effects/ & Shaders/          # WPF HLSL piksel shader bileşenleri
 ```
+
+### Lisans
+
+Bu proje **MIT Lisansı** kapsamında sunulmaktadır. Lisans koşulları için [`LICENSE`](LICENSE) dosyasına bakınız.
 
 ---
 
-## 📄 Lisans
+## English
 
-Bu proje **MIT Lisansı** altında lisanslanmıştır. Ayrıntılar için [`LICENSE`](LICENSE) dosyasına göz atabilirsiniz.
+### Overview
+
+**Forecord** is an open-source desktop screen recording application for Windows 10 and Windows 11 built on `.NET 8` and `WPF`. It is designed to provide high-quality video and audio capture with minimal system overhead, serving as a lightweight alternative to complex broadcasting suites.
+
+The application integrates GPU-based desktop capture (DXGI Desktop Duplication), hardware-accelerated video encoding, real-time audio-video muxing, and live on-screen annotation within a streamlined interface.
+
+### Technical Features
+
+- **Desktop Capture Architecture**
+  - Low-latency frame acquisition via Direct3D 11 and the **DXGI Desktop Duplication API**.
+  - **Variable Frame Rate (VFR)** pacing with duplicate-frame skipping and **Dirty-Rect / Move-Rect** partial readback optimization to minimize memory bandwidth during static screen periods.
+  - Adaptive performance management that dynamically adjusts frame rate caps and encoder presets based on system load and power state.
+- **Video Encoding and Muxing**
+  - Automatic hardware encoder detection and fallback chain: **NVIDIA NVENC (`h264_nvenc`)**, **AMD AMF (`h264_amf`)**, **Intel QSV (`h264_qsv`)**, and software **CPU (`libx264`)**.
+  - Direct D3D11 GPU texture encoding (`NvencGpuEncoder`, `AmfGpuEncoder`) and an integrated MP4 container muxer (`H264Mp4Muxer`).
+  - Support for 30, 60, and 120 FPS targets alongside Native, 1080p, 1440p, and 4K output resolutions.
+- **Audio Capture and Synchronization**
+  - Simultaneous microphone and system audio (loopback) capture via **WASAPI**.
+  - Real-time audio-video muxing over Named Pipes during recording to avoid post-recording transcoding delays.
+  - On-the-fly audio source toggling with seamless segment transitions.
+- **Recording Controls and On-Screen Annotation**
+  - Floating control bar excluded from the recorded video stream via the Windows `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` API.
+  - Full-screen transparent annotation overlay supporting pen, arrow, and eraser tools, with automatic click-through (`WS_EX_TRANSPARENT`) when no drawing tool is active.
+  - On-demand (lazy) cursor-free PNG screenshot capture without per-frame memory copying overhead.
+  - Pause and resume functionality with automatic segment concatenation into a single MP4 output file.
+
+### System Requirements
+
+| Component | Requirement |
+|---|---|
+| **Operating System** | Windows 10 (Version 2004 / Build 19041 or later) or Windows 11 (x64) |
+| **.NET SDK / Runtime** | [.NET 8.0 SDK (Windows x64)](https://dotnet.microsoft.com/download/dotnet/8.0) |
+| **FFmpeg** | `ffmpeg.exe` (placed in the application directory or available in the system `PATH`) |
+
+### Installation and Build
+
+#### 1. Clone the Repository
+```powershell
+git clone https://github.com/HypeAITR/Forecord.git
+cd Forecord
+```
+
+#### 2. Configure FFmpeg
+Obtain `ffmpeg.exe` from an official distribution (e.g., [Gyan.dev FFmpeg Builds](https://www.gyan.dev/ffmpeg/builds/)) and either:
+- Copy `ffmpeg.exe` into the `ScreenRecorder/` project directory (or build output directory), or
+- Add the directory containing `ffmpeg.exe` to your system `PATH` environment variable.
+
+#### 3. Build and Run
+```powershell
+cd ScreenRecorder
+
+dotnet restore
+dotnet build -c Release
+dotnet run -c Release
+```
+
+#### Publish as a Single-File Executable
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+```
+
+### Default Keyboard Shortcuts
+
+All global shortcuts can be customized through the **Settings** window.
+
+| Action | Default Shortcut |
+|---|---|
+| Start / Stop Recording | `Ctrl + Alt + R` |
+| Pause / Resume Recording | `Ctrl + Alt + P` |
+| Toggle Microphone | `Ctrl + Alt + M` |
+| Capture Screenshot (During Recording) | `Ctrl + Alt + S` |
+
+**Annotation Overlay Shortcuts (When annotation toolbar is open):**
+
+| Action | Shortcut |
+|---|---|
+| Pen Tool | `D` |
+| Eraser Tool | `E` |
+| Undo Last Action | `Ctrl + Z` |
+| Clear All Annotations | `C` |
+| Release Active Tool (Return to Desktop Interaction) | `Esc` |
+
+### Project Structure
+
+```text
+Forecord/
+└── ScreenRecorder/
+    ├── ScreenRecorder.csproj        # Project configuration and NuGet dependencies
+    ├── App.xaml / App.xaml.cs       # Application lifecycle and resource dictionaries
+    ├── MainWindow.xaml(.cs)         # Main control window
+    ├── Helpers/
+    │   └── DesktopCapture.cs        # DXGI Desktop Duplication, dirty-rect, and cursor compositing
+    ├── Models/                      # Data models and state definitions
+    ├── Services/
+    │   ├── RecordingService.cs      # Capture loop, VFR pacing, and segment orchestration
+    │   ├── EncoderService.cs        # FFmpeg process management, hardware probing, and muxing
+    │   ├── AudioService.cs          # WASAPI audio capture and Named Pipe streaming
+    │   ├── SothelCaptureEngine.cs   # Capture session and telemetry management
+    │   ├── HotkeyService.cs         # Win32 global hotkey registration
+    │   ├── SettingsService.cs       # JSON configuration persistence (%AppData%\Forecord)
+    │   ├── FileService.cs           # Output and temporary file management
+    │   ├── GpuEncoding/             # Direct NVIDIA NVENC and AMD AMF D3D11 encoding layer
+    │   └── Muxing/                  # H.264 Annex-B to MP4 muxer (H264Mp4Muxer)
+    ├── ViewModels/                  # MVVM view models
+    ├── Views/                       # UI windows, floating panel, and annotation overlay
+    └── Effects/ & Shaders/          # WPF HLSL pixel shader components
+```
+
+### License
+
+This project is licensed under the **MIT License**. See the [`LICENSE`](LICENSE) file for details.
