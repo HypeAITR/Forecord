@@ -1,0 +1,45 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Dd]ebugCheck/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+*_wpftmp.csproj
+*.tmp_proj
+
+# Third-party binaries & media outputs
+ffmpeg.exe
+ffprobe.exe
+*.mp4
+*.mkv
+*.wav
+*.png
+*.ownmux.error.txt
+
+# Local notes, research prompts & design backups (excluded from repo)
+PROMPT_*.md
+yolharitası.md
+KURULUM.md
+_backup_*/

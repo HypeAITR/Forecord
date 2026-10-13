@@ -1,0 +1,331 @@
+<Window x:Class="ScreenRecorder.Views.DrawingThicknessPanel"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Kalınlık"
+        Width="360" SizeToContent="Height"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Focusable="False">
+
+    <Window.Resources>
+        <!-- İnce custom slider -->
+        <Style TargetType="Slider">
+            <Setter Property="Background" Value="#22FFFFFF"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Height="22">
+                            <Border Height="3" CornerRadius="1.5"
+                                    Background="#33FFFFFF"
+                                    VerticalAlignment="Center"/>
+                            <Track x:Name="PART_Track">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Grid>
+                                                    <Ellipse Width="18" Height="18"
+                                                             Fill="#FFFF453A"/>
+                                                    <Ellipse Width="6" Height="6"
+                                                             Fill="White"/>
+                                                </Grid>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Background="Transparent" Opacity="0"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Background="Transparent" Opacity="0"/>
+                                </Track.DecreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Diğer seçenekler ikon butonu -->
+        <Style x:Key="OptBtn" TargetType="Button">
+            <Setter Property="Width"  Value="36"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Chevron close button -->
+        <Style x:Key="ChevronBtn" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                BorderBrush="#FFFF453A"
+                                BorderThickness="1"
+                                Background="Transparent"
+                                CornerRadius="6">
+                            <Path Data="M 0,4 L 4,0 L 8,4"
+                                  Stroke="#FFFF453A"
+                                  StrokeThickness="1.6"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#22FF453A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetName="Root"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.18"/>
+                    <DoubleAnimation Storyboard.TargetName="RootTranslate"
+                                     Storyboard.TargetProperty="Y"
+                                     From="-6" To="0" Duration="0:0:0.18">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Border x:Name="Root"
+            Background="#F01C1C1E"
+            CornerRadius="20"
+            BorderBrush="#33FFFFFF"
+            BorderThickness="0.5"
+            Opacity="0">
+        <Border.RenderTransform>
+            <TranslateTransform x:Name="RootTranslate"/>
+        </Border.RenderTransform>
+        <Border.Effect>
+            <DropShadowEffect Color="Black" Opacity="0.55" BlurRadius="22" ShadowDepth="0"/>
+        </Border.Effect>
+
+        <Grid Margin="20,16,20,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Üst satır: başlık + px değeri + chevron -->
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <TextBlock x:Name="LabelText"
+                           Text="Kalem boyutu"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Foreground="White"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <TextBlock x:Name="ValueText"
+                               Text="4 px"
+                               FontSize="12"
+                               Foreground="#B8FFFFFF"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <Button Style="{StaticResource ChevronBtn}"
+                            ToolTip="Kapat"
+                            Click="Chevron_Click"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Slider 1-100 -->
+            <Grid Grid.Row="1" Margin="0,0,0,4">
+                <Slider x:Name="SizeSlider"
+                        Minimum="1" Maximum="25"
+                        SmallChange="1" LargeChange="2"
+                        Value="4"
+                        ValueChanged="SizeSlider_OnValueChanged"
+                        VerticalAlignment="Center"/>
+            </Grid>
+            <Grid Grid.Row="1" Margin="0,22,0,0" IsHitTestVisible="False">
+                <TextBlock Text="1" FontSize="10"
+                           Foreground="#60FFFFFF"
+                           HorizontalAlignment="Left"/>
+                <TextBlock Text="25" FontSize="10"
+                           Foreground="#60FFFFFF"
+                           HorizontalAlignment="Right"/>
+            </Grid>
+
+            <!-- Dalgalı önizleme — yükseklik sabit, stroke kalınlığı clamp'lenir -->
+            <Border Grid.Row="2"
+                    Margin="0,16,0,0"
+                    CornerRadius="10"
+                    Background="#10000000"
+                    BorderBrush="#22FFFFFF"
+                    BorderThickness="1"
+                    Padding="14,14"
+                    Height="68"
+                    ClipToBounds="True">
+                <Path x:Name="PreviewWave"
+                      Stroke="White"
+                      StrokeThickness="6"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round"
+                      StrokeLineJoin="Round"
+                      Stretch="None"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Center"
+                      SnapsToDevicePixels="True"/>
+            </Border>
+
+            <!-- Renk noktaları -->
+            <ItemsControl x:Name="PanelColorList" Grid.Row="3" Margin="0,16,0,0">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Columns="6" Rows="1"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Width="36" Height="36"
+                                Cursor="Hand"
+                                Tag="{Binding}"
+                                Click="ColorDot_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Grid>
+                                        <Ellipse x:Name="Ring"
+                                                 Width="32" Height="32"
+                                                 Stroke="#00FFFFFF"
+                                                 StrokeThickness="2"/>
+                                        <Ellipse Width="22" Height="22"
+                                                 Fill="{Binding}"
+                                                 Stroke="#22000000"
+                                                 StrokeThickness="0.5"/>
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Ring" Property="Stroke" Value="#55FFFFFF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Diğer seçenekler -->
+            <Grid Grid.Row="4" Margin="0,18,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0"
+                           Text="Diğer seçenekler"
+                           FontSize="11"
+                           Foreground="#80FFFFFF"
+                           Margin="0,0,0,8"/>
+                <Grid Grid.Row="1">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                        <ToggleButton x:Name="SmoothBtn"
+                                      Width="36" Height="32"
+                                      IsChecked="True"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      Cursor="Hand"
+                                      Margin="0,0,8,0"
+                                      ToolTip="Yumuşatma"
+                                      Click="Smooth_Click">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Bd"
+                                            Background="#1AFFFFFF"
+                                            BorderBrush="#FFFF453A"
+                                            BorderThickness="0"
+                                            CornerRadius="8">
+                                        <Path Data="M 2,8 C 5,2 8,14 11,8 C 14,2 17,14 20,8"
+                                              Stroke="White" StrokeThickness="1.6"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Bd" Property="BorderThickness" Value="1.2"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ToggleButton x:Name="ArrowBtn"
+                                      Width="36" Height="32"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      Cursor="Hand"
+                                      ToolTip="Ok aracı"
+                                      Click="Arrow_Click">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Bd"
+                                            Background="#1AFFFFFF"
+                                            BorderBrush="#FFFF453A"
+                                            BorderThickness="0"
+                                            CornerRadius="8">
+                                        <Path Data="M 2,9 L 14,9 L 11,5 M 14,9 L 11,13"
+                                              Stroke="White" StrokeThickness="1.6"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                                        </Trigger>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Bd" Property="BorderThickness" Value="1.2"/>
+                                            <Setter TargetName="Bd" Property="Background" Value="#33FF453A"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

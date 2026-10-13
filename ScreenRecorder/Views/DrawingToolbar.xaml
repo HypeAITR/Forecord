@@ -1,0 +1,221 @@
+<Window x:Class="ScreenRecorder.Views.DrawingToolbar"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Çizim Araçları"
+        SizeToContent="WidthAndHeight"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Focusable="False">
+
+    <Window.Resources>
+        <!-- Tek bir buton şablonu — toolbar'daki tüm ikon butonları aynı görünüme sahip. -->
+        <Style x:Key="ToolBtn" TargetType="Button">
+            <Setter Property="Width"  Value="32"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToolToggle" TargetType="ToggleButton">
+            <Setter Property="Width"  Value="32"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="#1AFFFFFF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FFFF453A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetName="Root"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.18"/>
+                    <DoubleAnimation Storyboard.TargetName="RootScale"
+                                     Storyboard.TargetProperty="ScaleX"
+                                     From="0.95" To="1" Duration="0:0:0.18">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetName="RootScale"
+                                     Storyboard.TargetProperty="ScaleY"
+                                     From="0.95" To="1" Duration="0:0:0.18">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <!-- Ana popup ile aynı dil: pill, koyu glass, drop-shadow, ince üst-border. -->
+    <Border x:Name="Root"
+            Background="#F01C1C1E"
+            CornerRadius="22"
+            BorderBrush="#33FFFFFF"
+            BorderThickness="0.5"
+            RenderTransformOrigin="0.5,0.5"
+            Opacity="0">
+        <Border.RenderTransform>
+            <ScaleTransform x:Name="RootScale" ScaleX="0.95" ScaleY="0.95"/>
+        </Border.RenderTransform>
+        <Border.Effect>
+            <DropShadowEffect Color="Black" Opacity="0.55" BlurRadius="24" ShadowDepth="0"/>
+        </Border.Effect>
+
+        <StackPanel Orientation="Horizontal" Margin="10,8" >
+
+            <!-- Kalem -->
+            <ToggleButton x:Name="PenBtn"
+                          Style="{StaticResource ToolToggle}"
+                          ToolTip="Kalem (D)"
+                          Click="Pen_Click"
+                          Margin="0,0,4,0">
+                <TextBlock Text="✎" FontSize="16"/>
+            </ToggleButton>
+
+            <!-- Silgi -->
+            <ToggleButton x:Name="EraserBtn"
+                          Style="{StaticResource ToolToggle}"
+                          ToolTip="Silgi (E)"
+                          Click="Eraser_Click"
+                          Margin="0,0,8,0">
+                <TextBlock Text="◇" FontSize="16"/>
+            </ToggleButton>
+
+            <!-- Renk noktaları -->
+            <ItemsControl x:Name="ColorList" VerticalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Width="20" Height="20"
+                                Margin="2,0"
+                                Cursor="Hand"
+                                Tag="{Binding}"
+                                Click="ColorDot_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Grid>
+                                        <Ellipse x:Name="Ring"
+                                                 Width="20" Height="20"
+                                                 Stroke="#00FFFFFF" StrokeThickness="2"/>
+                                        <Ellipse x:Name="Dot"
+                                                 Width="14" Height="14"
+                                                 Fill="{Binding}"/>
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Ring" Property="Stroke" Value="#55FFFFFF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Border Width="1" Background="#22FFFFFF" Margin="6,4"/>
+
+            <!-- Kalınlık paneli -->
+            <ToggleButton x:Name="ThicknessBtn"
+                          Style="{StaticResource ToolToggle}"
+                          ToolTip="Boyut ayarla"
+                          Click="ThicknessToggle_Click"
+                          Margin="0,0,4,0">
+                <Grid Width="14" Height="14">
+                    <Rectangle Width="14" Height="2" Fill="White"
+                               VerticalAlignment="Top" RadiusX="1" RadiusY="1"/>
+                    <Rectangle Width="14" Height="4" Fill="White"
+                               VerticalAlignment="Bottom" RadiusX="2" RadiusY="2"/>
+                </Grid>
+            </ToggleButton>
+
+            <Border Width="1" Background="#22FFFFFF" Margin="6,4"/>
+
+            <!-- Geri al -->
+            <Button x:Name="UndoBtn"
+                    Style="{StaticResource ToolBtn}"
+                    ToolTip="Geri al (Ctrl+Z)"
+                    Click="Undo_Click"
+                    Margin="0,0,4,0">
+                <TextBlock Text="↶" FontSize="16"/>
+            </Button>
+
+            <!-- Temizle -->
+            <Button x:Name="ClearBtn"
+                    Style="{StaticResource ToolBtn}"
+                    ToolTip="Tümünü temizle"
+                    Click="Clear_Click"
+                    Margin="0,0,4,0"
+                    Background="#22FF453A">
+                <TextBlock Text="🗑" FontSize="13"/>
+            </Button>
+
+            <!-- Kapat -->
+            <Button x:Name="CloseBtn"
+                    Style="{StaticResource ToolBtn}"
+                    ToolTip="Çizim panelini kapat (Esc)"
+                    Click="Close_Click">
+                <TextBlock Text="✕" FontSize="13" Foreground="#A0FFFFFF"/>
+            </Button>
+        </StackPanel>
+    </Border>
+</Window>

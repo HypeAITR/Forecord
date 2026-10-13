@@ -1,0 +1,222 @@
+<Window x:Class="ScreenRecorder.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:bg="clr-namespace:ScreenRecorder.Views.Background"
+        Title="Ayarlar"
+        Width="540" Height="640"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+
+    <Window.Resources>
+        <Style x:Key="Label" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="Foreground" Value="{StaticResource SubTextBrush}"/>
+            <Setter Property="Margin"     Value="0,0,0,6"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="{StaticResource SubTextBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin"     Value="4,0,0,8"/>
+        </Style>
+        <!-- Kart container -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background"      Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="CornerRadius"    Value="10"/>
+            <Setter Property="Padding"         Value="16"/>
+            <Setter Property="Margin"          Value="0,0,0,16"/>
+        </Style>
+        <Style x:Key="TB" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}"/>
+        <Style x:Key="CB" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </Window.Resources>
+
+    <!-- Pencere fade-in -->
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.25"/>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Border Background="{StaticResource BgBrush}"
+            CornerRadius="14"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <bg:LayeredBackground Grid.RowSpan="3" Opacity="0.62"/>
+
+            <!-- Başlık -->
+            <Border Grid.Row="0" CornerRadius="14,14,0,0"
+                    Background="Transparent"
+                    MouseLeftButtonDown="TitleBar_MouseDown">
+                <Grid Margin="20,0">
+                    <TextBlock Text="Ayarlar"
+                               FontSize="14" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Ayar alanları -->
+            <ScrollViewer Grid.Row="1" Padding="20,4,20,8">
+                <StackPanel>
+
+                    <!-- ── Genel ──────────────────────────────────────── -->
+                    <TextBlock Text="GENEL" Style="{StaticResource SectionTitle}"/>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="Mod" Style="{StaticResource Label}"/>
+                            <ComboBox Style="{StaticResource CB}" Margin="0,0,0,12"
+                                      ItemsSource="{Binding CaptureModeOptions}"
+                                      SelectedItem="{Binding CaptureMode}"/>
+
+                            <StackPanel Visibility="{Binding IsCaptureMode, Converter={StaticResource BoolToVisibility}}"
+                                        Margin="0,0,0,16">
+                                <TextBlock Text="Capture Kapısı" Style="{StaticResource Label}"/>
+                                <TextBlock Text="{Binding CaptureTechnique}"
+                                           FontSize="12"
+                                           Foreground="{StaticResource TextBrush}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,8"/>
+                                <TextBlock Text="{Binding CaptureTechniqueDetail}"
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           Foreground="{StaticResource SubTextBrush}"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding CaptureTechniqueGate}"
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           Foreground="{StaticResource SubTextBrush}"
+                                           Opacity="0.85"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Kayıt Klasörü" Style="{StaticResource Label}"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0"
+                                         Text="{Binding OutputDir, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource TB}" Margin="0,0,8,0"/>
+                                <Button Grid.Column="1" Content="Gözat"
+                                        Style="{StaticResource FlatButton}" Padding="14,8"
+                                        Command="{Binding BrowseFolderCommand}"/>
+                            </Grid>
+
+                            <TextBlock Text="Çözünürlük" Style="{StaticResource Label}"/>
+                            <ComboBox Style="{StaticResource CB}" Margin="0,0,0,16"
+                                      ItemsSource="{Binding ResolutionOptions}"
+                                      SelectedItem="{Binding Resolution}"/>
+
+                            <TextBlock Text="Kare Hızı (FPS)" Style="{StaticResource Label}"/>
+                            <ComboBox Style="{StaticResource CB}" Margin="0,0,0,16"
+                                      ItemsSource="{Binding FpsOptions}"
+                                      SelectedItem="{Binding Fps}"/>
+
+                            <TextBlock Text="{Binding OutputPreview}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource SubTextBrush}"
+                                       Margin="0,0,0,16"
+                                       Opacity="0.85"/>
+
+                            <TextBlock Text="Kalite" Style="{StaticResource Label}"/>
+                            <ComboBox Style="{StaticResource CB}"
+                                      ItemsSource="{Binding QualityOptions}"
+                                      SelectedItem="{Binding Quality}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── Ses ────────────────────────────────────────── -->
+                    <TextBlock Text="SES" Style="{StaticResource SectionTitle}"/>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="Mikrofon Cihazı" Style="{StaticResource Label}"/>
+                            <ComboBox Style="{StaticResource CB}" Margin="0,0,0,12"
+                                      x:Name="MicCombo"
+                                      DisplayMemberPath="Name"
+                                      SelectedValuePath="Id"
+                                      SelectedValue="{Binding MicDeviceId}">
+                                <ComboBox.ItemsSource>
+                                    <Binding Path="MicrophoneDevices"/>
+                                </ComboBox.ItemsSource>
+                            </ComboBox>
+
+                            <CheckBox Content="Sistem sesini kaydet"
+                                      IsChecked="{Binding SysAudio}"
+                                      Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── Performans ─────────────────────────────────── -->
+                    <TextBlock Text="PERFORMANS" Style="{StaticResource SectionTitle}"/>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                        <CheckBox Content="Donanım hızlandırmalı kodlama (NVENC / AMF / QSV)"
+                                      IsChecked="{Binding HwAccel}"
+                                      Margin="0,0,0,12"/>
+                            <CheckBox Content="Performansa göre ölçeklendirilebilir preset ayarını etkinleştir"
+                                      IsChecked="{Binding AdaptiveScaling}"
+                                      Margin="0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── Kısayollar ─────────────────────────────────── -->
+                    <TextBlock Text="KISAYOL TUŞLARI" Style="{StaticResource SectionTitle}"/>
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="Başlat / Durdur" Style="{StaticResource Label}"/>
+                            <TextBox Text="{Binding HotkeyStart, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource TB}" Margin="0,0,0,12"/>
+
+                            <TextBlock Text="Duraklat / Devam Et" Style="{StaticResource Label}"/>
+                            <TextBox Text="{Binding HotkeyPause, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource TB}" Margin="0,0,0,12"/>
+
+                            <TextBlock Text="Mikrofon Aç / Kapat" Style="{StaticResource Label}"/>
+                            <TextBox Text="{Binding HotkeyMic, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource TB}" Margin="0,0,0,12"/>
+
+                            <TextBlock Text="Ekran Görüntüsü" Style="{StaticResource Label}"/>
+                            <TextBox Text="{Binding HotkeyScreenshot, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource TB}"/>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Alt Butonlar -->
+            <Border Grid.Row="2" Padding="20,12,20,20"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,1,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="İptal" Style="{StaticResource FlatButton}"
+                            Margin="0,0,8,0" Padding="18,8" Click="Cancel_Click"/>
+                    <Button Content="Kaydet" Style="{StaticResource FlatButton}"
+                            Background="{StaticResource AccentBlueBrush}"
+                            Foreground="White"
+                            Padding="18,8"
+                            Command="{Binding SaveCommand}"/>
+                </StackPanel>
+            </Border>
+
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,195 @@
+<Window x:Class="ScreenRecorder.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:bg="clr-namespace:ScreenRecorder.Views.Background"
+        xmlns:vm="clr-namespace:ScreenRecorder.ViewModels"
+        Title="Forecord"
+        Width="440" Height="560"
+        MinWidth="360" MinHeight="500"
+        ResizeMode="CanMinimize"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <vm:InverseBoolConverter x:Key="InvBool"/>
+        <Style x:Key="MainRecordBtn" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource AccentOrangeBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <!-- Pencere açılış fade-in animasyonu -->
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.35"/>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Border Background="{StaticResource BgBrush}"
+            CornerRadius="14"
+            BorderBrush="{StaticResource BorderBrush}"
+            BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect Color="Black" Opacity="0.5" BlurRadius="20" ShadowDepth="0"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="42"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <bg:LayeredBackground Grid.RowSpan="2"/>
+
+            <!-- Başlık çubuğu (sürüklenebilir) -->
+            <Border Grid.Row="0" CornerRadius="16,16,0,0"
+                    Background="#D82C2C2E"
+                    MouseLeftButtonDown="TitleBar_MouseDown">
+                <Grid Margin="14,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- Kayıt göstergesi: kayıt sırasında nabız animasyonu -->
+                        <Ellipse Width="8" Height="8" Margin="0,0,8,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource SubTextBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource AccentRedBrush}"/>
+                                            <DataTrigger.EnterActions>
+                                                <BeginStoryboard Name="PulseStory">
+                                                    <Storyboard RepeatBehavior="Forever">
+                                                        <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                         From="1" To="0.25" Duration="0:0:0.8"
+                                                                         AutoReverse="True"/>
+                                                    </Storyboard>
+                                                </BeginStoryboard>
+                                            </DataTrigger.EnterActions>
+                                            <DataTrigger.ExitActions>
+                                                <StopStoryboard BeginStoryboardName="PulseStory"/>
+                                            </DataTrigger.ExitActions>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource AccentOrangeBrush}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Forecord"
+                                   Foreground="{StaticResource TextBrush}"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Content="—" Style="{StaticResource FlatButton}"
+                                Padding="10,4" Click="Minimize_Click"/>
+                        <Button Content="✕" Style="{StaticResource FlatButton}"
+                                Padding="10,4" Margin="4,0,0,0" Click="Close_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Ana içerik -->
+            <StackPanel Grid.Row="1" Margin="28,24,28,28" VerticalAlignment="Top">
+
+                <!-- Sayaç -->
+                <TextBlock Text="{Binding TimerText}"
+                           FontSize="56" FontWeight="Light" FontFamily="Consolas"
+                           Foreground="{StaticResource TextBrush}"
+                           HorizontalAlignment="Center" Margin="0,0,0,4"/>
+
+                <!-- Durum -->
+                <TextBlock Text="{Binding StatusMsg}" FontSize="13"
+                           Foreground="{StaticResource SubTextBrush}"
+                           HorizontalAlignment="Center" Margin="0,0,0,28"/>
+
+                <!-- Kaydı Başlat / Durdur -->
+                <Button Style="{StaticResource MainRecordBtn}"
+                        Command="{Binding StartStopCommand}"
+                        HorizontalAlignment="Center" Margin="0,0,0,14">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="⏺  Kaydı Başlat"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                        <Setter Property="Text" Value="⏹  Durdur"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                        <Setter Property="Text" Value="⏹  Durdur"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+
+                <!-- Duraklat / Devam Et -->
+                <Button Command="{Binding PauseResumeCommand}"
+                        Style="{StaticResource FlatButton}"
+                        IsEnabled="{Binding IsIdle, Converter={StaticResource InvBool}}"
+                        HorizontalAlignment="Center" Margin="0,0,0,32">
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="⏸  Duraklat"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                        <Setter Property="Text" Value="▶  Devam Et"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+
+                <Separator/>
+
+                <!-- Ses Kontrolleri -->
+                <TextBlock Text="S E S" FontSize="10" FontWeight="Bold"
+                           Foreground="{StaticResource SubTextBrush}"
+                           HorizontalAlignment="Center" Margin="0,10,0,10"/>
+
+                <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,24">
+                    <ToggleButton Style="{StaticResource ToggleIconButton}"
+                                  IsChecked="{Binding MicEnabled}"
+                                  ToolTip="Mikrofon aç / kapat" Margin="0,0,10,0">
+                        <TextBlock Text="🎤"/>
+                    </ToggleButton>
+                    <ToggleButton Style="{StaticResource ToggleIconButton}"
+                                  IsChecked="{Binding SysAudioEnabled}"
+                                  ToolTip="Sistem sesi aç / kapat">
+                        <TextBlock Text="🔊"/>
+                    </ToggleButton>
+                </WrapPanel>
+
+                <Separator/>
+
+                <!-- Klasör + Ayarlar -->
+                <WrapPanel HorizontalAlignment="Center" Margin="0,16,0,0">
+                    <Button Style="{StaticResource FlatButton}"
+                            Command="{Binding OpenFolderCommand}"
+                            Margin="0,0,8,0" ToolTip="Kayıt klasörünü aç">
+                        📁  Klasör
+                    </Button>
+                    <Button Style="{StaticResource FlatButton}"
+                            Command="{Binding OpenSettingsCommand}"
+                            ToolTip="Ayarlar">
+                        ⚙  Ayarlar
+                    </Button>
+                </WrapPanel>
+
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
