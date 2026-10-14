@@ -360,12 +360,16 @@ public static class PipelineSelfTest
         });
 
         string? finalPath = null;
+        var screenshotPath = Path.Combine(tempOutDir, "selftest_shot.png");
+        var screenshotOk = false;
         try
         {
             Task.Run(async () =>
             {
                 await recSvc.StartAsync(settings).ConfigureAwait(false);
-                await Task.Delay(2500).ConfigureAwait(false);
+                await Task.Delay(1200).ConfigureAwait(false);
+                screenshotOk = await recSvc.TrySaveScreenshotAsync(screenshotPath).ConfigureAwait(false);
+                await Task.Delay(1300).ConfigureAwait(false);
                 recSvc.Pause();
                 await Task.Delay(400).ConfigureAwait(false);
                 await recSvc.ResumeAsync().ConfigureAwait(false);
@@ -376,15 +380,19 @@ public static class PipelineSelfTest
             wiggleCts.Cancel();
             try { wiggleTask.GetAwaiter().GetResult(); } catch { }
 
+            if (!screenshotOk || !File.Exists(screenshotPath) || new FileInfo(screenshotPath).Length < 512)
+                throw new InvalidOperationException("TrySaveScreenshotAsync failed during GPU-Direct recording.");
+
             if (string.IsNullOrWhiteSpace(finalPath) || !File.Exists(finalPath))
                 throw new InvalidOperationException("StopAsync did not produce an output file.");
 
             var size = new FileInfo(finalPath).Length;
+            var shotSize = new FileInfo(screenshotPath).Length;
             var decodable = Task.Run(() => encoderSvc.ProbeSegmentAsync(finalPath, minBytes: 1024)).GetAwaiter().GetResult();
             if (!decodable)
                 throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg decode verification.");
 
-            return $"Full Start(2.5s) -> Pause -> Resume(2.5s) -> Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
+            return $"Full Start(2.5s + Screenshot {shotSize}B) -> Pause -> Resume(2.5s) -> Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
         }
         finally
         {

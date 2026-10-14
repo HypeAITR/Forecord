@@ -102,7 +102,7 @@ public sealed class NvencGpuEncoder : IGpuEncoder
         }
     }
 
-    public void EncodeTexture(Texture2D texture, TimeSpan presentationTime)
+    public void EncodeTexture(Texture2D texture, TimeSpan presentationTime, Action<Texture2D>? postCopyOverlay = null)
     {
         ArgumentNullException.ThrowIfNull(texture);
 
@@ -113,6 +113,7 @@ public sealed class NvencGpuEncoder : IGpuEncoder
         }
 
         _device.ImmediateContext.CopyResource(texture, _inputTexture);
+        postCopyOverlay?.Invoke(_inputTexture);
 
         NvencMappedResource mapped = default;
         try

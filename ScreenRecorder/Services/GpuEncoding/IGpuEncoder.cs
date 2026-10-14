@@ -9,6 +9,6 @@ public interface IGpuEncoder : IDisposable
     bool IsInitialized { get; }
 
     void Initialize(Device device, GpuEncoderSettings settings);
-    void EncodeTexture(Texture2D texture, TimeSpan presentationTime);
+    void EncodeTexture(Texture2D texture, TimeSpan presentationTime, Action<Texture2D>? postCopyOverlay = null);
     Task FinishAsync(CancellationToken cancellationToken = default);
 }

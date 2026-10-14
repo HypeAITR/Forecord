@@ -491,6 +491,12 @@ public sealed class RecordingService : IDisposable
                     _gpuDirect.SegmentPath,
                     _settings,
                     _powerProfile.FpsCap,
+                    _screenshots,
+#if DEBUG
+                    _telemetry,
+#else
+                    null,
+#endif
                     () => _stopSignal,
                     OnAdaptiveThrottleChanged);
             }

@@ -83,7 +83,7 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         }
     }
 
-    public void EncodeTexture(Texture2D texture, TimeSpan presentationTime)
+    public void EncodeTexture(Texture2D texture, TimeSpan presentationTime, Action<Texture2D>? postCopyOverlay = null)
     {
         ArgumentNullException.ThrowIfNull(texture);
 
@@ -96,6 +96,7 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         try
         {
             _device.ImmediateContext.CopyResource(texture, _sharedInputTexture);
+            postCopyOverlay?.Invoke(_sharedInputTexture);
             surface = CreateSurfaceFromD3D11Texture(_sharedInputTexture);
 
             SetDataTiming(surface, presentationTime, _frameDuration);

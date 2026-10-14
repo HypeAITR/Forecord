@@ -37,6 +37,7 @@ public sealed class DesktopCapture : IDisposable
     private int     _cursorRestoreW;
     private int     _cursorRestoreH;
     private bool    _cursorRestoreActive;
+    private byte[]? _gpuCursorPatch;
     private int     _desktopLeft;
     private int     _desktopTop;
 
@@ -646,6 +647,185 @@ public sealed class DesktopCapture : IDisposable
         }
 
         _cursorRestoreActive = false;
+    }
+
+    /// <summary>
+    /// Reads back the full GPU texture into <paramref name="buffer"/> on demand
+    /// (used only when a lazy screenshot is requested in GPU-Direct mode).
+    /// </summary>
+    public void ReadbackFullTexture(Texture2D texture, byte[] buffer)
+    {
+        CopyFullFrame(texture, buffer);
+    }
+
+    /// <summary>
+    /// Blends the hardware cursor onto <paramref name="targetTexture"/> by
+    /// reading and updating ONLY the tiny cursor bounding box (e.g. 32x32 px)
+    /// instead of copying the full screen texture to CPU.
+    /// </summary>
+    public unsafe bool CompositeCursorOnGpuTexture(Texture2D sourceTexture, Texture2D targetTexture)
+    {
+        if (!_cursorVisible || _cursorShape == null || _cursorShapeW <= 0 || _cursorShapeH <= 0)
+            return false;
+
+        var cursorH = _cursorShapeType == 1 ? _cursorShapeH / 2 : _cursorShapeH;
+        if (cursorH <= 0)
+            return false;
+
+        var destX = _cursorX - _cursorHotSpotX;
+        var destY = _cursorY - _cursorHotSpotY;
+        var clippedX = Math.Max(0, destX);
+        var clippedY = Math.Max(0, destY);
+        var clippedRight = Math.Min(Width, destX + _cursorShapeW);
+        var clippedBottom = Math.Min(Height, destY + cursorH);
+        var clippedW = clippedRight - clippedX;
+        var clippedH = clippedBottom - clippedY;
+
+        if (clippedW <= 0 || clippedH <= 0)
+            return false;
+
+        var patchStride = clippedW * 4;
+        var neededBytes = patchStride * clippedH;
+        if (_gpuCursorPatch == null || _gpuCursorPatch.Length < neededBytes)
+            _gpuCursorPatch = new byte[neededBytes];
+
+        var region = new ResourceRegion(clippedX, clippedY, 0, clippedRight, clippedBottom, 1);
+        _device.ImmediateContext.CopySubresourceRegion(
+            sourceTexture, 0, region, _stagingTex, 0, clippedX, clippedY, 0);
+
+        var box = _device.ImmediateContext.MapSubresource(_stagingTex, 0, MapMode.Read, MapFlags.None);
+        try
+        {
+            var srcBase = (byte*)box.DataPointer.ToPointer();
+            fixed (byte* dstBase = _gpuCursorPatch)
+            {
+                for (var row = 0; row < clippedH; row++)
+                {
+                    System.Buffer.MemoryCopy(
+                        srcBase + (long)(clippedY + row) * box.RowPitch + clippedX * 4,
+                        dstBase + (long)row * patchStride,
+                        patchStride,
+                        patchStride);
+                }
+            }
+        }
+        finally
+        {
+            _device.ImmediateContext.UnmapSubresource(_stagingTex, 0);
+        }
+
+        BlendCursorIntoPatch(_gpuCursorPatch, clippedX, clippedY, clippedW, clippedH, destX, destY, cursorH);
+
+        fixed (byte* patchPtr = _gpuCursorPatch)
+        {
+            var targetRegion = new ResourceRegion(clippedX, clippedY, 0, clippedRight, clippedBottom, 1);
+            _device.ImmediateContext.UpdateSubresource(
+                new SharpDX.DataBox((IntPtr)patchPtr, patchStride, neededBytes),
+                targetTexture,
+                0,
+                targetRegion);
+        }
+
+        return true;
+    }
+
+    private void BlendCursorIntoPatch(
+        byte[] patch,
+        int clippedX,
+        int clippedY,
+        int clippedW,
+        int clippedH,
+        int destX,
+        int destY,
+        int cursorH)
+    {
+        var patchStride = clippedW * 4;
+        var shapeStride = _cursorShapeW * 4;
+        var srcRowBytes = (_cursorShapeW + 7) / 8;
+
+        for (var row = 0; row < clippedH; row++)
+        {
+            var sy = (clippedY + row) - destY;
+            if (sy < 0 || sy >= cursorH) continue;
+
+            for (var col = 0; col < clippedW; col++)
+            {
+                var sx = (clippedX + col) - destX;
+                if (sx < 0 || sx >= _cursorShapeW) continue;
+
+                var dIdx = row * patchStride + col * 4;
+
+                if (_cursorShapeType == 2)
+                {
+                    var sIdx = sy * shapeStride + sx * 4;
+                    var sa = _cursorShape![sIdx + 3];
+                    if (sa == 0) continue;
+                    var sb = _cursorShape[sIdx + 0];
+                    var sg = _cursorShape[sIdx + 1];
+                    var sr = _cursorShape[sIdx + 2];
+                    if (sa == 255)
+                    {
+                        patch[dIdx + 0] = sb;
+                        patch[dIdx + 1] = sg;
+                        patch[dIdx + 2] = sr;
+                    }
+                    else
+                    {
+                        var ia = 255 - sa;
+                        patch[dIdx + 0] = (byte)((sb * sa + patch[dIdx + 0] * ia) / 255);
+                        patch[dIdx + 1] = (byte)((sg * sa + patch[dIdx + 1] * ia) / 255);
+                        patch[dIdx + 2] = (byte)((sr * sa + patch[dIdx + 2] * ia) / 255);
+                    }
+                }
+                else if (_cursorShapeType == 4)
+                {
+                    var sIdx = sy * shapeStride + sx * 4;
+                    var sb = _cursorShape![sIdx + 0];
+                    var sg = _cursorShape[sIdx + 1];
+                    var sr = _cursorShape[sIdx + 2];
+                    var sa = _cursorShape[sIdx + 3];
+                    if (sa == 0)
+                    {
+                        patch[dIdx + 0] = sb;
+                        patch[dIdx + 1] = sg;
+                        patch[dIdx + 2] = sr;
+                    }
+                    else
+                    {
+                        patch[dIdx + 0] ^= sb;
+                        patch[dIdx + 1] ^= sg;
+                        patch[dIdx + 2] ^= sr;
+                    }
+                }
+                else if (_cursorShapeType == 1)
+                {
+                    var andRow = sy * srcRowBytes;
+                    var xorRow = (sy + cursorH) * srcRowBytes;
+                    var byteOffset = sx / 8;
+                    var bitMask = 0x80 >> (sx % 8);
+                    var andBit = (_cursorShape![andRow + byteOffset] & bitMask) != 0 ? 1 : 0;
+                    var xorBit = (_cursorShape![xorRow + byteOffset] & bitMask) != 0 ? 1 : 0;
+                    if (andBit == 0 && xorBit == 0)
+                    {
+                        patch[dIdx + 0] = 0;
+                        patch[dIdx + 1] = 0;
+                        patch[dIdx + 2] = 0;
+                    }
+                    else if (andBit == 0 && xorBit == 1)
+                    {
+                        patch[dIdx + 0] = 255;
+                        patch[dIdx + 1] = 255;
+                        patch[dIdx + 2] = 255;
+                    }
+                    else if (andBit == 1 && xorBit == 1)
+                    {
+                        patch[dIdx + 0] = (byte)(255 - patch[dIdx + 0]);
+                        patch[dIdx + 1] = (byte)(255 - patch[dIdx + 1]);
+                        patch[dIdx + 2] = (byte)(255 - patch[dIdx + 2]);
+                    }
+                }
+            }
+        }
     }
 
     private void CaptureCursorRestore(byte[] buffer)

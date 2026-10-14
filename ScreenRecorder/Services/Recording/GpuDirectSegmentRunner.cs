@@ -143,6 +143,8 @@ internal sealed class GpuDirectSegmentRunner
         string segmentPath,
         AppSettings settings,
         int fpsCap,
+        ScreenshotCaptureCoordinator screenshots,
+        RecordingTelemetry? telemetry,
         Func<bool> isStopSignaled,
         Action<AdaptiveThrottleAction, int> onAdaptiveThrottleChanged)
     {
@@ -154,11 +156,27 @@ internal sealed class GpuDirectSegmentRunner
         long acquiredFrames = 0;
         long skippedFrames = 0;
         long encodedCallbacks = 0;
+        byte[]? lazyScreenshotBuffer = null;
 
         try
         {
             using var muxer = new H264Mp4Muxer(segmentPath, cap.Width, cap.Height, settings.Fps);
             using var encoder = CreateEncoder();
+            using var lastDesktopTex = new SharpDX.Direct3D11.Texture2D(
+                cap.Device,
+                new SharpDX.Direct3D11.Texture2DDescription
+                {
+                    Width = cap.Width,
+                    Height = cap.Height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = SharpDX.DXGI.Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SharpDX.DXGI.SampleDescription(1, 0),
+                    Usage = SharpDX.Direct3D11.ResourceUsage.Default,
+                    BindFlags = SharpDX.Direct3D11.BindFlags.ShaderResource,
+                    CpuAccessFlags = SharpDX.Direct3D11.CpuAccessFlags.None,
+                    OptionFlags = SharpDX.Direct3D11.ResourceOptionFlags.None
+                });
 
             void AddEncodedPacket(byte[]? bitstream, long outputTimeStamp, long outputDuration, string pictureType)
             {
@@ -204,41 +222,123 @@ internal sealed class GpuDirectSegmentRunner
                     settings.Quality,
                     segmentPath));
 
-            var encodedAny = false;
+            var hasLastDesktop = false;
+            var lastEncodeAt = TimeSpan.Zero;
+            var maxIdleInterval = TimeSpan.FromMilliseconds(250);
+
+            if (!cap.TryAcquireGpuFrame(out var firstGpuFrame, timeoutMs: 32) || firstGpuFrame == null)
+            {
+                lazyScreenshotBuffer ??= new byte[cap.Width * cap.Height * 4];
+                if (cap.CaptureInitialFrameFallback(lazyScreenshotBuffer))
+                {
+                    unsafe
+                    {
+                        fixed (byte* ptr = lazyScreenshotBuffer)
+                        {
+                            cap.Device.ImmediateContext.UpdateSubresource(
+                                new SharpDX.DataBox((IntPtr)ptr, cap.Width * 4, lazyScreenshotBuffer.Length),
+                                lastDesktopTex,
+                                0);
+                        }
+                    }
+                    hasLastDesktop = true;
+                    encoder.EncodeTexture(
+                        lastDesktopTex,
+                        sw.Elapsed,
+                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    lastEncodeAt = sw.Elapsed;
+                    telemetry?.RecordEncodedFrame(cursorOnly: false);
+                }
+            }
+            else
+            {
+                using (firstGpuFrame)
+                {
+                    acquiredFrames++;
+                    cap.Device.ImmediateContext.CopyResource(firstGpuFrame.Texture, lastDesktopTex);
+                    hasLastDesktop = true;
+                    encoder.EncodeTexture(
+                        lastDesktopTex,
+                        sw.Elapsed,
+                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    lastEncodeAt = sw.Elapsed;
+                    telemetry?.RecordEncodedFrame(cursorOnly: false);
+                }
+            }
+
             while (!isStopSignaled())
             {
                 var t0 = sw.Elapsed;
                 var wroteFrame = false;
 
                 var acquiredGpuFrame = cap.TryAcquireGpuFrame(out var gpuFrame, timeoutMs: 0);
+                var hasImageUpdate = false;
+                var cursorChanged = false;
+
                 if (acquiredGpuFrame && gpuFrame != null)
                 {
                     using (gpuFrame)
                     {
                         acquiredFrames++;
-                        var hasImageUpdate = gpuFrame.Metadata.LastPresentTime != 0;
-                        var primeEncoder = muxer.SampleCount == 0 && acquiredFrames <= 30;
-                        if (!encodedAny || hasImageUpdate || primeEncoder)
+                        hasImageUpdate = gpuFrame.Metadata.LastPresentTime != 0 || !hasLastDesktop;
+                        cursorChanged = gpuFrame.CursorChanged;
+
+                        if (hasImageUpdate)
                         {
-                            encoder.EncodeTexture(gpuFrame.Texture, sw.Elapsed);
-                            encodedAny = true;
-                            wroteFrame = true;
-                        }
-                        else
-                        {
-                            skippedFrames++;
+                            cap.Device.ImmediateContext.CopyResource(gpuFrame.Texture, lastDesktopTex);
+                            hasLastDesktop = true;
                         }
                     }
                 }
 
+                if (hasLastDesktop && screenshots.IsPending)
+                {
+                    lazyScreenshotBuffer ??= new byte[cap.Width * cap.Height * 4];
+                    cap.ReadbackFullTexture(lastDesktopTex, lazyScreenshotBuffer);
+                    if (screenshots.TryComplete(lazyScreenshotBuffer, cap.Width, cap.Height))
+                        telemetry?.RecordSnapshotTaken();
+                }
+
+                var primeEncoder = muxer.SampleCount == 0 && acquiredFrames <= 30;
+                var keepaliveDue = hasLastDesktop && (sw.Elapsed - lastEncodeAt >= maxIdleInterval);
+                var shouldEncode = hasLastDesktop && (hasImageUpdate || cursorChanged || primeEncoder || keepaliveDue);
+
+                if (shouldEncode)
+                {
+                    var pts = sw.Elapsed;
+                    encoder.EncodeTexture(
+                        lastDesktopTex,
+                        pts,
+                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    wroteFrame = true;
+                    lastEncodeAt = pts;
+                    telemetry?.RecordEncodedFrame(cursorOnly: cursorChanged && !hasImageUpdate);
+                }
+                else if (acquiredGpuFrame)
+                {
+                    skippedFrames++;
+                    telemetry?.RecordSkippedIdleFrame();
+                }
+
                 var elapsed = sw.Elapsed - t0;
-                var action = adaptive.Observe(sw.Elapsed, elapsed, wroteFrame, TimeSpan.Zero, out _);
+                var action = adaptive.Observe(sw.Elapsed, elapsed, wroteFrame, TimeSpan.Zero, out var hadPressure);
+                if (hadPressure)
+                    telemetry?.RecordAdaptivePressure();
                 if (action != AdaptiveThrottleAction.None)
                     onAdaptiveThrottleChanged(action, adaptive.CurrentFps);
 
                 var remaining = adaptive.FrameInterval - elapsed;
                 if (remaining > TimeSpan.FromMilliseconds(1))
                     Thread.Sleep((int)remaining.TotalMilliseconds);
+            }
+
+            if (hasLastDesktop)
+            {
+                encoder.EncodeTexture(
+                    lastDesktopTex,
+                    sw.Elapsed,
+                    target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                telemetry?.RecordEncodedFrame(cursorOnly: false);
             }
 
             encoder.FinishAsync().GetAwaiter().GetResult();
