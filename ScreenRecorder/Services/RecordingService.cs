@@ -66,9 +66,10 @@ public sealed class RecordingService : IDisposable
         _segIdx = 0;
         Interlocked.Exchange(ref _adaptivePreferFastPreset, 0);
         _gpuDirect.Reset(settings);
-        _debugLiveMuxActive = EnableDebugLiveMux && (settings.MicrophoneEnabled || settings.SystemAudioEnabled);
+        var hasAudioRequested = settings.MicrophoneEnabled || settings.SystemAudioEnabled;
+        _debugLiveMuxActive = EnableDebugLiveMux && hasAudioRequested && !_gpuDirect.IsRequested;
 
-        if (!_gpuDirect.IsRequested && _encoder.FindFFmpeg() == null)
+        if ((!_gpuDirect.IsRequested || hasAudioRequested) && _encoder.FindFFmpeg() == null)
         {
             var err = RecordingDiagnostics.ReportError(
                 DiagnosticStage.Startup,
@@ -302,10 +303,6 @@ public sealed class RecordingService : IDisposable
                                     (Volatile.Read(ref _adaptivePreferFastPreset) != 0 ||
                                      _powerProfile.UsePerformancePreset);
 
-        List<LiveAudioPipeInput>? liveAudioInputs = null;
-        var useLiveMux = _debugLiveMuxActive;
-        if (useLiveMux)
-            liveAudioInputs = _audio.PrepareLivePipes(micEnabled, sysEnabled, micId);
 #if DEBUG
         Debug.WriteLine(_powerProfile.ToDebugString());
         if (usePerformancePreset)
@@ -314,11 +311,35 @@ public sealed class RecordingService : IDisposable
 
         if (_gpuDirect.TryBeginSegment(segPath, micEnabled, sysEnabled, _screenW, _screenH, _outW, _outH))
         {
+            _debugLiveMuxActive = false;
+            string? gpuMicPath = micEnabled ? Path.Combine(segDir, "mic.wav") : null;
+            string? gpuSysPath = sysEnabled ? Path.Combine(segDir, "system.wav") : null;
+            if (micEnabled || sysEnabled)
+            {
+                _ = Task.Run(() =>
+                {
+                    try { _audio.Start(segDir, micEnabled, sysEnabled, micId); }
+                    catch (Exception ex)
+                    {
+                        RecordingDiagnostics.ReportError(
+                            DiagnosticStage.AudioPipe,
+                            "Audio capture start failed for GPU-Direct segment.",
+                            ex);
+                    }
+                });
+            }
+
             _videoSegments.Add(segPath);
-            _audioSegments.Add((null, null));
+            _audioSegments.Add((gpuMicPath, gpuSysPath));
             StartCaptureThread();
             return;
         }
+
+        _debugLiveMuxActive = EnableDebugLiveMux && (micEnabled || sysEnabled);
+        List<LiveAudioPipeInput>? liveAudioInputs = null;
+        var useLiveMux = _debugLiveMuxActive;
+        if (useLiveMux)
+            liveAudioInputs = _audio.PrepareLivePipes(micEnabled, sysEnabled, micId);
 
         if (_encoder.FindFFmpeg() == null)
             throw new InvalidOperationException(

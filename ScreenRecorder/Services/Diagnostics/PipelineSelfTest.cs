@@ -338,7 +338,7 @@ public static class PipelineSelfTest
             Quality = "Yüksek",
             OutputResolution = "720p",
             MicrophoneEnabled = false,
-            SystemAudioEnabled = false,
+            SystemAudioEnabled = true,
             EnableGpuDirectPipeline = true,
             MonitorIndex = 0
         };
@@ -392,7 +392,7 @@ public static class PipelineSelfTest
             if (!decodable)
                 throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg decode verification.");
 
-            return $"Full Start(2.5s @720p GPU-Scaled + Screenshot {shotSize}B) -> Pause -> Resume(2.5s) -> Native Concat Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
+            return $"Full Start(2.5s @720p GPU-Scaled + SystemAudio + Screenshot {shotSize}B) -> Pause -> Resume(2.5s) -> Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
         }
         finally
         {

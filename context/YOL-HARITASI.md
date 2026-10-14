@@ -15,7 +15,7 @@ Ayrıntılı teknik plan `context/GPU-DIRECT-PLAN.md` dosyasındadır:
 - [x] **Faz 1 (2026-10-14):** GPU Kodlayıcıların (`NvencGpuEncoder`, `AmfGpuEncoder`) Sıfır-Tahsis (Zero-Allocation) ve Kalite/GOP Optimizasyonu. (Her karede doku/bitstream yaratma kaldırıldı; canlı GPU -> `H264Mp4Muxer` -> FFmpeg decode doğrulaması geçti.)
 - [x] **Faz 2 (2026-10-14):** GPU-Direct Döngüsünde Fare İmleci (`CompositeCursorOnGpuTexture`), Lazy Screenshot (`ReadbackFullTexture`) ve VFR Keepalive/Telemetri Desteği.
 - [x] **Faz 3 (2026-10-14):** GPU-Direct Çoklu Segment (`H264Mp4Muxer.TryConcatenateSegments`) ve Çözünürlük Ölçekleme (`D3D11TextureScaler`) Desteği.
-- [ ] **Faz 4:** `H264Mp4Muxer` Ses (AAC Track) Entegrasyonu (ses açıkken de FFmpeg'siz kayıt).
+- [x] **Faz 4 (2026-10-14):** GPU-Direct + Ses Kaydı Entegrasyonu (Mikrofon/Sistem sesi açıkken de video sıfır yükle GPU-Direct üzerinden kaydedilir, kayıt sonunda `-c:v copy` ile yeniden kodlamasız birleştirilir).
 - [ ] **Faz 5:** Ayarlar Penceresi (`EnableGpuDirectPipeline`) Entegrasyonu ve Otomatik Fallback.
 
 ## Açık sorular

@@ -49,22 +49,6 @@ internal sealed class GpuDirectSegmentRunner
         if (!IsRequested)
             return false;
 
-        var forcedByEnv = IsEnvironmentEnabled(EnvVarName);
-        if (micEnabled || sysEnabled)
-        {
-            if (!forcedByEnv)
-            {
-                RecordingDiagnostics.Info(
-                    DiagnosticStage.GpuProbe,
-                    "GPU direct own mux requested, but audio is enabled; using FFmpeg path.");
-                return false;
-            }
-
-            RecordingDiagnostics.Info(
-                DiagnosticStage.GpuProbe,
-                "GPU direct own mux env is set; audio is bypassed for this video-only mux test.");
-        }
-
         DesktopAdapterInfo adapterInfo;
         try
         {
@@ -103,7 +87,7 @@ internal sealed class GpuDirectSegmentRunner
                 LastError = null;
                 RecordingDiagnostics.Info(
                     DiagnosticStage.EncoderInit,
-                    "ACTIVE=GPU_DIRECT_AMF_OWN_MUX videoOnly=true container=mp4");
+                    $"ACTIVE=GPU_DIRECT_AMF_OWN_MUX audio={micEnabled || sysEnabled} container=mp4");
                 return true;
             }
 
@@ -132,7 +116,7 @@ internal sealed class GpuDirectSegmentRunner
         LastError = null;
         RecordingDiagnostics.Info(
             DiagnosticStage.EncoderInit,
-            "ACTIVE=GPU_DIRECT_NVENC_OWN_MUX videoOnly=true container=mp4");
+            $"ACTIVE=GPU_DIRECT_NVENC_OWN_MUX audio={micEnabled || sysEnabled} container=mp4");
         return true;
     }
 
