@@ -247,7 +247,7 @@ public class EncoderService
     // only when the file has at least one decodable video packet. Catches the
     // "48-byte shell" failure mode where the live-mux ffmpeg exited before any
     // frame reached the muxer (file has ftyp+free atoms but no moov/mdat).
-    public async Task<bool> ProbeSegmentAsync(string filePath, int minBytes = 4096)
+    public async Task<bool> ProbeSegmentAsync(string filePath, int minBytes = 4096, bool requireAudioStream = false)
     {
         try
         {
@@ -256,10 +256,11 @@ public class EncoderService
             // the highest QP. Anything below minBytes is almost certainly a shell.
             if (new FileInfo(filePath).Length < minBytes) return false;
 
+            var audioMap = requireAudioStream ? " -map 0:a:0" : "";
             var psi = new ProcessStartInfo
             {
                 FileName = _ffmpegPath,
-                Arguments = $"-v error -nostdin -i \"{filePath}\" -map 0:v:0 -t 0.5 -f null -",
+                Arguments = $"-v error -nostdin -i \"{filePath}\" -map 0:v:0{audioMap} -t 0.5 -f null -",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

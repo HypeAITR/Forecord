@@ -31,3 +31,8 @@ Her madde: belirti → sebep → çözüm. Aynı hatayı tekrar yapma; yenisini 
    - **Belirti:** `AmfGpuEncoder.DrainAvailableOutput` içinde ikinci kare kodlandığında uygulama aniden sessizce çöküyor (`amfrtdrv64.dll`, hata kodu `0xc0000409`).
    - **Sebep:** C++'ta `AMFData* pData = nullptr; QueryOutput(&pData);` ile çağrılan fonksiyon, C# P/Invoke tarafında `out IntPtr data` olarak tanımlandığında CLR çağrı öncesinde yığındaki (stack) işaretçiyi sıfırlamaz. `QueryOutput` `AMF_REPEAT` (24) döndürdüğünde yerel sürücü `data` adresine hiç dokunmaz ve önceki döngüden kalan serbest bırakılmış (`Release`'lenmiş) COM işaretçisi `data` içinde kalır; döngünün altındaki `if (data != IntPtr.Zero) ReleaseInterface(data);` satırı ise serbest bırakılmış işaretçiye **double-free** yaparak sürücüyü çökertir.
    - **Çözüm:** `QueryOutput` çağrısından önce yerel değişken mutlaka `var data = IntPtr.Zero;` olarak ilklendirilmeli ve yalnızca `status == AmfOk && data != IntPtr.Zero` olduğunda `ReleaseInterface(data)` çağrılmalıdır.
+
+7. **Windows Media Foundation AAC MFT (`IMFTransform.SetOutputType`) `0xC00D36E6` (`MF_E_ATTRIBUTENOTFOUND`) hatası.**
+   - **Belirti:** `MfAacFrameEncoder` içinde sıfırdan `IMFMediaType` yaratılıp `SetOutputType` çağrıldığında `0xC00D36E6` hatası fırlatılıyor.
+   - **Sebep:** Microsoft AAC Encoder MFT, giriş (`SetInputType`) ayarlandıktan sonra kendi dahili `AudioSpecificConfig` (`MF_MT_USER_DATA`) özniteliğini içeren aday çıkış tipleri üretir; sıfırdan yaratılan `IMFMediaType` bu öznitelikleri taşımadığı için reddedilir.
+   - **Çözüm:** Önce `SetInputType` çağrılmalı, ardından `MediaFoundationEncoder.SelectMediaType(AudioSubtypes.MFAudioFormat_AAC, ...)` ile MFT'nin kendi sunduğu `IMFMediaType` seçilip `SetOutputType`'a verilmelidir.

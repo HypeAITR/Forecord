@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using ScreenRecorder.Helpers;
 using ScreenRecorder.Models;
+using ScreenRecorder.Services.Audio;
 using ScreenRecorder.Services.Diagnostics;
 using ScreenRecorder.Services.GpuEncoding;
 using ScreenRecorder.Services.Muxing;
@@ -168,6 +169,14 @@ internal sealed class GpuDirectSegmentRunner
         {
             using var muxer = new H264Mp4Muxer(segmentPath, outW, outH, settings.Fps);
             using var encoder = CreateEncoder();
+            using var liveAudio = (settings.MicrophoneEnabled || settings.SystemAudioEnabled)
+                ? new LiveAacAudioPipeline(
+                    muxer,
+                    sw,
+                    settings.MicrophoneEnabled,
+                    settings.SystemAudioEnabled,
+                    settings.MicrophoneDeviceId)
+                : null;
             using var scaler = needsScaling ? new D3D11TextureScaler(cap.Device, outW, outH) : null;
             using var cursorCompositeTex = needsScaling
                 ? new SharpDX.Direct3D11.Texture2D(
@@ -263,6 +272,8 @@ internal sealed class GpuDirectSegmentRunner
                     settings.Fps,
                     settings.Quality,
                     segmentPath));
+
+            liveAudio?.Start();
 
             var hasLastDesktop = false;
             var lastEncodeAt = TimeSpan.Zero;
@@ -371,11 +382,12 @@ internal sealed class GpuDirectSegmentRunner
                 telemetry?.RecordEncodedFrame(cursorOnly: false);
             }
 
+            liveAudio?.StopAndFlush();
             encoder.FinishAsync().GetAwaiter().GetResult();
             muxer.Finish();
             RecordingDiagnostics.Info(
                 DiagnosticStage.MuxFinish,
-                $"OwnMux segment finished acquired={acquiredFrames} encodedPackets={Interlocked.Read(ref encodedCallbacks)} skippedIdle={skippedFrames} path={segmentPath}");
+                $"OwnMux segment finished acquired={acquiredFrames} encodedPackets={Interlocked.Read(ref encodedCallbacks)} audioPackets={liveAudio?.EmittedAacFrames ?? 0} skippedIdle={skippedFrames} path={segmentPath}");
         }
         catch (Exception ex)
         {

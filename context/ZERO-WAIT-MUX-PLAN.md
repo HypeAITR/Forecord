@@ -28,7 +28,7 @@
   Doğrudan hedef `.mp4` dosyasını aç, ilk 48 byte'ı (`ftyp` 32B + `mdat` 64-bit header 16B) rezerve et, paketleri doğrudan `.mp4`'e yaz, `Finish()` anında kopyalama yapmadan sona `moov` yazıp ilk 48 byte'ı güncelle (`Finish()` süresi **0 ms** olarak ölçüldü).
 - [x] **Faz B (2026-10-14) — `H264Mp4Muxer` Yerleşik AAC Ses Track'i (`mp4a` / `esds`) ve Çoklu Segment Birleştirme:**
   `H264Mp4Muxer` içine ikinci `trak` (`soun` / `mp4a` / `esds` AudioSpecificConfig) ve `TryConcatenateSegments` içine ses birleştirme desteği eklendi (`stsd` ayrıştırma hatası yakalanıp düzeltildi).
-- [ ] **Faz C — Saat-Kilitli Canlı Ses Karıştırıcı ve Windows Yerleşik AAC Kodlayıcı (`LiveAacAudioPipeline`):**
-  WASAPI mikrofon + sistem sesini canlı karıştırıp Windows Media Foundation AAC MFT ile kayıt esnasında anlık AAC paketlerine çeviren ve senkronizasyon kaymasını (drift) önleyen boru hattı.
-- [ ] **Faz D — `GpuDirectSegmentRunner` & `RecordingService` Bağlantısı (FFmpeg'siz Anında Kayıt Bitişi):**
-  Kayıt sırasında video + sesi doğrudan `H264Mp4Muxer` içine yaz, `StopAsync` çağrıldığında FFmpeg çalıştırmadan anında (`< 250 ms`) dosyayı teslim et.
+- [x] **Faz C (2026-10-14) — Saat-Kilitli Canlı Ses Karıştırıcı ve Windows Yerleşik AAC Kodlayıcı (`LiveAacAudioPipeline` & `MfAacFrameEncoder`):**
+  WASAPI mikrofon + sistem sesini canlı karıştırıp Windows Media Foundation AAC MFT ile kayıt esnasında anlık AAC paketlerine çeviren ve senkronizasyon kaymasını (drift) önleyen boru hattı tamamlandı.
+- [x] **Faz D (2026-10-14) — `GpuDirectSegmentRunner` & `RecordingService` Bağlantısı (FFmpeg'siz Anında Kayıt Bitişi):**
+  Kayıt sırasında video + ses doğrudan `H264Mp4Muxer` içine yazılıyor, `StopAsync` çağrıldığında FFmpeg çalıştırılmadan anında (**130–147 ms**) dosya teslim ediliyor.

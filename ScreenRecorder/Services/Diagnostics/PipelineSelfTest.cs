@@ -375,6 +375,7 @@ public static class PipelineSelfTest
         string? finalPath = null;
         var screenshotPath = Path.Combine(tempOutDir, "selftest_shot.png");
         var screenshotOk = false;
+        long stopElapsedMs = 0;
         try
         {
             Task.Run(async () =>
@@ -387,7 +388,10 @@ public static class PipelineSelfTest
                 await Task.Delay(400).ConfigureAwait(false);
                 await recSvc.ResumeAsync().ConfigureAwait(false);
                 await Task.Delay(2500).ConfigureAwait(false);
+                var stopSw = Stopwatch.StartNew();
                 finalPath = await recSvc.StopAsync().ConfigureAwait(false);
+                stopSw.Stop();
+                stopElapsedMs = stopSw.ElapsedMilliseconds;
             }).GetAwaiter().GetResult();
 
             wiggleCts.Cancel();
@@ -401,11 +405,15 @@ public static class PipelineSelfTest
 
             var size = new FileInfo(finalPath).Length;
             var shotSize = new FileInfo(screenshotPath).Length;
-            var decodable = Task.Run(() => encoderSvc.ProbeSegmentAsync(finalPath, minBytes: 1024)).GetAwaiter().GetResult();
+            var decodable = Task.Run(() => encoderSvc.ProbeSegmentAsync(finalPath, minBytes: 1024, requireAudioStream: true)).GetAwaiter().GetResult();
             if (!decodable)
-                throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg decode verification.");
+                throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg video+audio decode verification.");
 
-            return $"Full Start(2.5s @720p GPU-Scaled + SystemAudio + Screenshot {shotSize}B) -> Pause -> Resume(2.5s) -> Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
+            var ascii = Encoding.ASCII.GetString(File.ReadAllBytes(finalPath));
+            if (!ascii.Contains("mp4a", StringComparison.Ordinal) || !ascii.Contains("esds", StringComparison.Ordinal))
+                throw new InvalidOperationException("Final E2E output does not contain native AAC (mp4a/esds) audio track.");
+
+            return $"Full Start(2.5s @720p + LiveAAC + Screenshot {shotSize}B) -> Pause -> Resume(2.5s) -> Instant Stop ({stopElapsedMs}ms, 0 FFmpeg) succeeded: {Path.GetFileName(finalPath)} ({size}B, H.264+AAC verified).";
         }
         finally
         {
