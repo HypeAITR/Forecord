@@ -18,6 +18,9 @@ internal sealed unsafe class NvencNative : IDisposable
     private const uint PicStructFrame = 0x01;
     private const uint PicTypeUnknown = 0xFF;
     private const uint TuningInfoLowLatency = 2;
+    private const uint EncodePicFlagForceIdr = 0x04;
+    private const uint EncodePicFlagOutputSpsPps = 0x08;
+    private const uint EncodePicFlagEos = 0x10;
     private const int StatusInvalidCall = 9;
     private const int StatusEncoderNotInitialized = 11;
     private const int StatusNeedMoreInput = 17;
@@ -389,7 +392,8 @@ internal sealed unsafe class NvencNative : IDisposable
         int height,
         uint frameIndex,
         TimeSpan presentationTime,
-        TimeSpan duration)
+        TimeSpan duration,
+        bool forceIdrAndHeaders = false)
     {
         ThrowIfDisposed();
         if (encoder == IntPtr.Zero)
@@ -403,12 +407,17 @@ internal sealed unsafe class NvencNative : IDisposable
         if (height <= 0)
             throw new ArgumentOutOfRangeException(nameof(height), "Input height must be positive.");
 
+        var picFlags = forceIdrAndHeaders
+            ? (EncodePicFlagForceIdr | EncodePicFlagOutputSpsPps)
+            : 0u;
+
         var pic = new NvEncPicParams
         {
             Version = CurrentStructVersion(7),
             InputWidth = checked((uint)width),
             InputHeight = checked((uint)height),
             InputPitch = checked((uint)width),
+            EncodePicFlags = picFlags,
             FrameIdx = frameIndex,
             InputTimeStamp = checked((ulong)Math.Max(0, presentationTime.Ticks)),
             InputDuration = checked((ulong)Math.Max(0, duration.Ticks)),
@@ -466,6 +475,20 @@ internal sealed unsafe class NvencNative : IDisposable
                 ThrowIfFailed(unlockStatus, encoder, "NvEncUnlockBitstream");
             }
         }
+    }
+
+    public void SendEndOfStream(IntPtr encoder)
+    {
+        if (encoder == IntPtr.Zero || _disposed) return;
+
+        var pic = new NvEncPicParams
+        {
+            Version = CurrentStructVersion(7),
+            EncodePicFlags = EncodePicFlagEos
+        };
+
+        try { _ = _encodePicture(encoder, &pic); }
+        catch { }
     }
 
     public void AssertPacketApiReady()

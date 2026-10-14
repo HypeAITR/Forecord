@@ -1,4 +1,6 @@
 using SharpDX.Direct3D11;
+using SharpDX.DXGI;
+using D3D11Device = SharpDX.Direct3D11.Device;
 
 namespace ScreenRecorder.Services.GpuEncoding;
 
@@ -12,8 +14,15 @@ public sealed class NvencGpuEncoder : IGpuEncoder
     internal event Action<NvencEncodedPacketInfo>? PacketEncoded;
 
     private NvencNative? _api;
+    private D3D11Device? _device;
     private IntPtr _encoder;
-    private long _textureSmokeFrames;
+    private Texture2D? _inputTexture;
+    private NvencRegisteredResource _registeredResource;
+    private NvencBitstreamBuffer _bitstreamBuffer;
+    private int _width;
+    private int _height;
+    private int _keyframeInterval = 120;
+    private long _frameIndex;
     private TimeSpan _frameDuration = TimeSpan.FromMilliseconds(16.6667);
 
     public NvencGpuEncoder()
@@ -26,7 +35,7 @@ public sealed class NvencGpuEncoder : IGpuEncoder
         Capability = capability;
     }
 
-    public void Initialize(Device device, GpuEncoderSettings settings)
+    public void Initialize(D3D11Device device, GpuEncoderSettings settings)
     {
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(settings);
@@ -40,6 +49,10 @@ public sealed class NvencGpuEncoder : IGpuEncoder
         try
         {
             _api = api;
+            _device = device;
+            _width = settings.Width;
+            _height = settings.Height;
+            _keyframeInterval = Math.Max(60, settings.Fps * 2);
             _encoder = _api.OpenD3D11Session(device.NativePointer);
 
             var encodeGuids = _api.GetEncodeGuids(_encoder);
@@ -56,9 +69,30 @@ public sealed class NvencGpuEncoder : IGpuEncoder
             _api.InitializeH264Encoder(_encoder, settings.Width, settings.Height, settings.Fps);
             _frameDuration = TimeSpan.FromSeconds(1.0 / Math.Max(1, settings.Fps));
 
-            // Phase 2D initializes NVENC and performs packet smoke tests while
-            // the production recording hot path remains on the FFmpeg fallback.
-            System.Diagnostics.Debug.WriteLine("[NVENC direct] H.264 encoder initialized for packet smoke.");
+            // Pre-allocate and register the input texture and output bitstream buffer once.
+            _inputTexture = new Texture2D(device, new Texture2DDescription
+            {
+                Width = settings.Width,
+                Height = settings.Height,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.ShaderResource | BindFlags.RenderTarget,
+                CpuAccessFlags = CpuAccessFlags.None,
+                OptionFlags = ResourceOptionFlags.None
+            });
+
+            _registeredResource = _api.RegisterD3D11Texture(
+                _encoder,
+                _inputTexture.NativePointer,
+                settings.Width,
+                settings.Height);
+
+            _bitstreamBuffer = _api.CreateBitstreamBuffer(_encoder);
+
+            System.Diagnostics.Debug.WriteLine("[NVENC direct] H.264 encoder initialized with reusable GPU resources.");
             IsInitialized = true;
         }
         catch
@@ -72,91 +106,86 @@ public sealed class NvencGpuEncoder : IGpuEncoder
     {
         ArgumentNullException.ThrowIfNull(texture);
 
-        if (!IsInitialized)
+        if (!IsInitialized || _api == null || _device == null || _inputTexture == null ||
+            _encoder == IntPtr.Zero || _registeredResource.Handle == IntPtr.Zero || _bitstreamBuffer.Handle == IntPtr.Zero)
+        {
             throw new InvalidOperationException("NVENC direct encoder is not initialized.");
+        }
 
-        if (_api == null || _encoder == IntPtr.Zero)
-            throw new InvalidOperationException("NVENC direct API/session is not available.");
+        _device.ImmediateContext.CopyResource(texture, _inputTexture);
 
-        var desc = texture.Description;
-        NvencRegisteredResource registered = default;
         NvencMappedResource mapped = default;
-        NvencBitstreamBuffer bitstream = default;
-
         try
         {
-            bitstream = _api.CreateBitstreamBuffer(_encoder);
-            registered = _api.RegisterD3D11Texture(
-                _encoder,
-                texture.NativePointer,
-                desc.Width,
-                desc.Height);
-
-            mapped = _api.MapInputResource(_encoder, registered);
-            var frameIndex = (uint)(Interlocked.Increment(ref _textureSmokeFrames) - 1);
+            mapped = _api.MapInputResource(_encoder, _registeredResource);
+            var frameIndex = (uint)(Interlocked.Increment(ref _frameIndex) - 1);
+            var forceIdrAndHeaders = (frameIndex % (uint)_keyframeInterval) == 0;
             var packet = _api.EncodeMappedTexture(
                 _encoder,
                 mapped,
-                bitstream,
-                desc.Width,
-                desc.Height,
+                _bitstreamBuffer,
+                _width,
+                _height,
                 frameIndex,
                 presentationTime,
-                _frameDuration);
+                _frameDuration,
+                forceIdrAndHeaders);
 
             if (packet.HasBitstream)
             {
                 PacketEncoded?.Invoke(packet);
-                System.Diagnostics.Debug.WriteLine(
-                    "[NVENC direct] encoded packet smoke " +
-                    $"#{packet.FrameIndex} pts={presentationTime.TotalMilliseconds:F2}ms " +
-                    $"bytes={packet.SizeBytes} type={packet.PictureType} " +
-                    $"format={NvencNative.BufferFormatName(mapped.BufferFormat)}");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    "[NVENC direct] texture accepted without packet yet " +
-                    $"#{frameIndex} pts={presentationTime.TotalMilliseconds:F2}ms " +
-                    packet.Message);
             }
         }
         finally
         {
-            try
-            {
-                if (mapped.Handle != IntPtr.Zero)
-                    _api.UnmapInputResource(_encoder, mapped);
-            }
-            finally
-            {
-                try
-                {
-                    if (registered.Handle != IntPtr.Zero)
-                        _api.UnregisterResource(_encoder, registered);
-                }
-                finally
-                {
-                    if (bitstream.Handle != IntPtr.Zero)
-                        _api.DestroyBitstreamBuffer(_encoder, bitstream);
-                }
-            }
+            if (mapped.Handle != IntPtr.Zero)
+                _api.UnmapInputResource(_encoder, mapped);
         }
     }
 
-    public Task FinishAsync(CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+    public Task FinishAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsInitialized && _api != null && _encoder != IntPtr.Zero)
+            _api.SendEndOfStream(_encoder);
+
+        return Task.CompletedTask;
+    }
 
     public void Dispose()
     {
-        _api?.DestroyEncoder(_encoder);
+        if (_api != null && _encoder != IntPtr.Zero)
+        {
+            try
+            {
+                if (_registeredResource.Handle != IntPtr.Zero)
+                    _api.UnregisterResource(_encoder, _registeredResource);
+            }
+            catch { }
+
+            try
+            {
+                if (_bitstreamBuffer.Handle != IntPtr.Zero)
+                    _api.DestroyBitstreamBuffer(_encoder, _bitstreamBuffer);
+            }
+            catch { }
+
+            _api.DestroyEncoder(_encoder);
+        }
+
+        _registeredResource = default;
+        _bitstreamBuffer = default;
+        _inputTexture?.Dispose();
+        _inputTexture = null;
+        _device = null;
         _encoder = IntPtr.Zero;
         _api?.Dispose();
         _api = null;
+        _width = 0;
+        _height = 0;
         IsInitialized = false;
         SupportsH264 = false;
         SupportsArgbInput = false;
-        _textureSmokeFrames = 0;
+        _frameIndex = 0;
         _frameDuration = TimeSpan.FromMilliseconds(16.6667);
     }
 }

@@ -23,6 +23,9 @@ public sealed class AmfGpuEncoder : IGpuEncoder
     private D3D11Device? _device;
     private IntPtr _context;
     private IntPtr _component;
+    private Texture2D? _sharedInputTexture;
+    private int _width;
+    private int _height;
     private TimeSpan _frameDuration = TimeSpan.FromMilliseconds(16.6667);
     private long _frameIndex;
     private bool _forceHeadersOnNextFrame = true;
@@ -53,6 +56,8 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         {
             _api = api;
             _device = device;
+            _width = settings.Width;
+            _height = settings.Height;
             _context = CreateD3D11Context(api, device);
             _component = CreateAvcComponent(api, _context);
 
@@ -62,6 +67,7 @@ public sealed class AmfGpuEncoder : IGpuEncoder
             var status = initComponent(_component, AmfNative.AmfSurfaceBgra, settings.Width, settings.Height);
             api.ThrowIfFailed(status, "AMFComponent.Init(BGRA)");
 
+            _sharedInputTexture = CreateSharedInputTexture(device, settings.Width, settings.Height);
             _frameDuration = TimeSpan.FromSeconds(1.0 / Math.Max(1, settings.Fps));
             _extraData = TryReadBufferProperty(_component, "ExtraData");
             if (_extraData is { Length: > 0 })
@@ -81,7 +87,7 @@ public sealed class AmfGpuEncoder : IGpuEncoder
     {
         ArgumentNullException.ThrowIfNull(texture);
 
-        if (!IsInitialized || _api == null || _device == null || _context == IntPtr.Zero || _component == IntPtr.Zero)
+        if (!IsInitialized || _api == null || _device == null || _sharedInputTexture == null || _context == IntPtr.Zero || _component == IntPtr.Zero)
             throw new InvalidOperationException("AMF direct encoder is not initialized.");
 
         var frameIndex = Interlocked.Increment(ref _frameIndex) - 1;
@@ -89,8 +95,8 @@ public sealed class AmfGpuEncoder : IGpuEncoder
 
         try
         {
-            using var sharedTexture = CreateSharedGpuCopy(texture);
-            surface = CreateSurfaceFromD3D11Texture(sharedTexture);
+            _device.ImmediateContext.CopyResource(texture, _sharedInputTexture);
+            surface = CreateSurfaceFromD3D11Texture(_sharedInputTexture);
 
             SetDataTiming(surface, presentationTime, _frameDuration);
             if (_forceHeadersOnNextFrame)
@@ -103,9 +109,11 @@ public sealed class AmfGpuEncoder : IGpuEncoder
 
             var submit = AmfNative.GetDelegate<ComponentSubmitInputDelegate>(_component, 22);
             var status = submit(_component, surface);
-            if (status == AmfNative.AmfInputFull)
+            for (var retry = 0;
+                 (status == AmfNative.AmfInputFull || status == AmfNative.AmfRepeat) && retry < 15;
+                 retry++)
             {
-                DrainAvailableOutput(waitForPacket: false, cancellationToken: default);
+                DrainAvailableOutput(waitForPacket: true, cancellationToken: default);
                 status = submit(_component, surface);
             }
 
@@ -119,10 +127,6 @@ public sealed class AmfGpuEncoder : IGpuEncoder
             if (surface != IntPtr.Zero)
                 AmfNative.ReleaseInterface(surface);
         }
-
-        Debug.WriteLine(
-            "[AMF direct] submitted texture " +
-            $"#{frameIndex} pts={presentationTime.TotalMilliseconds:F2}ms");
     }
 
     public Task FinishAsync(CancellationToken cancellationToken = default)
@@ -141,6 +145,9 @@ public sealed class AmfGpuEncoder : IGpuEncoder
 
     public void Dispose()
     {
+        _sharedInputTexture?.Dispose();
+        _sharedInputTexture = null;
+
         if (_component != IntPtr.Zero)
         {
             try { AmfNative.GetDelegate<ComponentTerminateDelegate>(_component, 19)(_component); } catch { }
@@ -158,6 +165,8 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         _api?.Dispose();
         _api = null;
         _device = null;
+        _width = 0;
+        _height = 0;
         IsInitialized = false;
         _frameIndex = 0;
         _forceHeadersOnNextFrame = true;
@@ -220,19 +229,15 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         SetSize(component, "FrameSize", settings.Width, settings.Height);
     }
 
-    private Texture2D CreateSharedGpuCopy(Texture2D source)
+    private static Texture2D CreateSharedInputTexture(D3D11Device device, int width, int height)
     {
-        if (_device == null)
-            throw new InvalidOperationException("AMF direct D3D11 device is not available.");
-
-        var desc = source.Description;
         var sharedDesc = new Texture2DDescription
         {
-            Width = desc.Width,
-            Height = desc.Height,
+            Width = width,
+            Height = height,
             MipLevels = 1,
             ArraySize = 1,
-            Format = desc.Format,
+            Format = Format.B8G8R8A8_UNorm,
             SampleDescription = new SampleDescription(1, 0),
             Usage = ResourceUsage.Default,
             BindFlags = BindFlags.ShaderResource,
@@ -240,9 +245,7 @@ public sealed class AmfGpuEncoder : IGpuEncoder
             OptionFlags = ResourceOptionFlags.Shared
         };
 
-        var copy = new Texture2D(_device, sharedDesc);
-        _device.ImmediateContext.CopyResource(source, copy);
-        return copy;
+        return new Texture2D(device, sharedDesc);
     }
 
     private IntPtr CreateSurfaceFromD3D11Texture(Texture2D texture)
