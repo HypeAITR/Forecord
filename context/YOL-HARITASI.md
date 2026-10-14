@@ -16,7 +16,7 @@ Ayrıntılı teknik plan `context/GPU-DIRECT-PLAN.md` dosyasındadır:
 - [x] **Faz 2 (2026-10-14):** GPU-Direct Döngüsünde Fare İmleci (`CompositeCursorOnGpuTexture`), Lazy Screenshot (`ReadbackFullTexture`) ve VFR Keepalive/Telemetri Desteği.
 - [x] **Faz 3 (2026-10-14):** GPU-Direct Çoklu Segment (`H264Mp4Muxer.TryConcatenateSegments`) ve Çözünürlük Ölçekleme (`D3D11TextureScaler`) Desteği.
 - [x] **Faz 4 (2026-10-14):** GPU-Direct + Ses Kaydı Entegrasyonu (Mikrofon/Sistem sesi açıkken de video sıfır yükle GPU-Direct üzerinden kaydedilir, kayıt sonunda `-c:v copy` ile yeniden kodlamasız birleştirilir).
-- [ ] **Faz 5:** Ayarlar Penceresi (`EnableGpuDirectPipeline`) Entegrasyonu ve Otomatik Fallback.
+- [x] **Faz 5 (2026-10-14):** Ayarlar Penceresi (`EnableGpuDirectPipeline` varsayılan `true`), Donanım Probe Önbellekleme ve Otomatik Fallback Entegrasyonu.
 
 ## Açık sorular
 - GPU-Direct (`EnableGpuDirectPipeline`) kullanıcı arayüzünde (Ayarlar penceresinde) ne zaman varsayılan veya görünür seçenek haline getirilecek?

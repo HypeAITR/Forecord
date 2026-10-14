@@ -542,11 +542,6 @@ public sealed class RecordingService : IDisposable
         }
 
         var buffer = new byte[cap.Width * cap.Height * 4];
-        if (_settings.EnableGpuDirectPipeline &&
-            !GpuDirectSegmentRunner.TryProbeCaptureContract(cap, _settings))
-        {
-            Debug.WriteLine("[GpuDirect] Phase 2A probe failed; using FFmpeg pipe fallback.");
-        }
 
         var adaptive = new AdaptivePerformanceController(
             _settings.Fps,

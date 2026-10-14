@@ -25,7 +25,7 @@ public class AppSettings
 
     public bool EnablePerformanceAdaptiveScaling { get; set; } = true;
 
-    public bool EnableGpuDirectPipeline { get; set; } = false;
+    public bool EnableGpuDirectPipeline { get; set; } = true;
 
     public int MonitorIndex { get; set; } = 0;
 

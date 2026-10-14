@@ -12,6 +12,10 @@ internal sealed class GpuDirectSegmentRunner
 {
     public const string EnvVarName = "FORECORD_GPU_DIRECT_MUX";
 
+    private static readonly object ProbeCacheLock = new();
+    private static bool _probeCached;
+    private static string? _cachedSupportedBackend;
+
     public bool IsRequested { get; private set; }
     public bool IsActive { get; private set; }
     public string? BackendName { get; private set; }
@@ -49,75 +53,91 @@ internal sealed class GpuDirectSegmentRunner
         if (!IsRequested)
             return false;
 
-        DesktopAdapterInfo adapterInfo;
-        try
-        {
-            adapterInfo = DesktopCapture.GetDefaultAdapterInfo();
-        }
-        catch (Exception ex)
-        {
-            RecordingDiagnostics.ReportError(
-                DiagnosticStage.GpuProbe,
-                "Could not inspect capture adapter for GPU direct own mux; falling back to FFmpeg.",
-                ex);
+        var backend = GetOrProbeSupportedBackend(screenW, screenH);
+        if (backend == null)
             return false;
-        }
 
+        IsActive = true;
+        BackendName = backend;
+        SegmentPath = segPath;
+        LastError = null;
         RecordingDiagnostics.Info(
-            DiagnosticStage.GpuProbe,
-            $"GPU direct own mux candidate adapter={adapterInfo.ToDebugString()}");
+            DiagnosticStage.EncoderInit,
+            $"ACTIVE=GPU_DIRECT_{backend.ToUpperInvariant()}_OWN_MUX audio={micEnabled || sysEnabled} size={OutputWidth}x{OutputHeight} container=mp4");
+        return true;
+    }
 
-        if (!adapterInfo.IsNvidia)
+    private static string? GetOrProbeSupportedBackend(int screenW, int screenH)
+    {
+        lock (ProbeCacheLock)
         {
+            if (_probeCached)
+                return _cachedSupportedBackend;
+
+            _probeCached = true;
+
+            DesktopAdapterInfo adapterInfo;
+            try
+            {
+                adapterInfo = DesktopCapture.GetDefaultAdapterInfo();
+            }
+            catch (Exception ex)
+            {
+                RecordingDiagnostics.ReportError(
+                    DiagnosticStage.GpuProbe,
+                    "Could not inspect capture adapter for GPU direct own mux; falling back to FFmpeg.",
+                    ex);
+                _cachedSupportedBackend = null;
+                return null;
+            }
+
+            RecordingDiagnostics.Info(
+                DiagnosticStage.GpuProbe,
+                $"GPU direct own mux candidate adapter={adapterInfo.ToDebugString()}");
+
+            if (adapterInfo.IsNvidia)
+            {
+                var nvencProbe = NvencSessionProbe.ProbeDefaultD3D11Device();
+                RecordingDiagnostics.Info(DiagnosticStage.GpuProbe, nvencProbe.ToDebugString());
+                if (nvencProbe.CanOpenD3D11Session &&
+                    nvencProbe.SupportsH264 &&
+                    nvencProbe.SupportsArgbInput &&
+                    nvencProbe.CanInitializeEncoder)
+                {
+                    _cachedSupportedBackend = "nvenc-direct";
+                    return _cachedSupportedBackend;
+                }
+
+                RecordingDiagnostics.Info(
+                    DiagnosticStage.GpuProbe,
+                    "NVENC own mux probe did not pass; using FFmpeg path.");
+                _cachedSupportedBackend = null;
+                return null;
+            }
+
             if (adapterInfo.IsAmd)
             {
                 var amfProbe = AmfSessionProbe.ProbeDefaultD3D11Device(screenW, screenH);
                 RecordingDiagnostics.Info(DiagnosticStage.GpuProbe, amfProbe.ToDebugString());
-                if (!amfProbe.CanInitializeAvc)
+                if (amfProbe.CanInitializeAvc)
                 {
-                    RecordingDiagnostics.Info(
-                        DiagnosticStage.GpuProbe,
-                        "AMF AVC backend probe did not pass. Using FFmpeg path.");
-                    return false;
+                    _cachedSupportedBackend = "amf-direct";
+                    return _cachedSupportedBackend;
                 }
 
-                IsActive = true;
-                BackendName = "amf-direct";
-                SegmentPath = segPath;
-                LastError = null;
                 RecordingDiagnostics.Info(
-                    DiagnosticStage.EncoderInit,
-                    $"ACTIVE=GPU_DIRECT_AMF_OWN_MUX audio={micEnabled || sysEnabled} container=mp4");
-                return true;
+                    DiagnosticStage.GpuProbe,
+                    "AMF AVC backend probe did not pass. Using FFmpeg path.");
+                _cachedSupportedBackend = null;
+                return null;
             }
 
             RecordingDiagnostics.Info(
                 DiagnosticStage.GpuProbe,
                 $"GPU direct own mux supports NVENC/AMF; capture adapter is {adapterInfo.VendorName}. Using FFmpeg path.");
-            return false;
+            _cachedSupportedBackend = null;
+            return null;
         }
-
-        var nvencProbe = NvencSessionProbe.ProbeDefaultD3D11Device();
-        RecordingDiagnostics.Info(DiagnosticStage.GpuProbe, nvencProbe.ToDebugString());
-        if (!nvencProbe.CanOpenD3D11Session ||
-            !nvencProbe.SupportsH264 ||
-            !nvencProbe.SupportsArgbInput ||
-            !nvencProbe.CanInitializeEncoder)
-        {
-            RecordingDiagnostics.Info(
-                DiagnosticStage.GpuProbe,
-                "NVENC own mux probe did not pass; using FFmpeg path.");
-            return false;
-        }
-
-        IsActive = true;
-        BackendName = "nvenc-direct";
-        SegmentPath = segPath;
-        LastError = null;
-        RecordingDiagnostics.Info(
-            DiagnosticStage.EncoderInit,
-            $"ACTIVE=GPU_DIRECT_NVENC_OWN_MUX audio={micEnabled || sysEnabled} container=mp4");
-        return true;
     }
 
     public void RunCaptureLoop(

@@ -143,7 +143,10 @@
                     <TextBlock Text="PERFORMANS" Style="{StaticResource SectionTitle}"/>
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
-                        <CheckBox Content="Donanım hızlandırmalı kodlama (NVENC / AMF / QSV)"
+                            <CheckBox Content="Doğrudan GPU kodlama ve yerleşik MP4 paketleme (Zero-Overhead)"
+                                      IsChecked="{Binding GpuDirect}"
+                                      Margin="0,0,0,12"/>
+                            <CheckBox Content="Donanım hızlandırmalı kodlama (NVENC / AMF / QSV)"
                                       IsChecked="{Binding HwAccel}"
                                       Margin="0,0,0,12"/>
                             <CheckBox Content="Performansa göre ölçeklendirilebilir preset ayarını etkinleştir"

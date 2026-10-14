@@ -21,6 +21,7 @@ public class SettingsViewModel : INotifyPropertyChanged
         _micDeviceId    = svc.Settings.MicrophoneDeviceId;
         _sysAudio       = svc.Settings.SystemAudioEnabled;
         _hwAccel        = svc.Settings.HardwareAcceleration;
+        _gpuDirect      = svc.Settings.EnableGpuDirectPipeline;
         _adaptiveScaling = svc.Settings.EnablePerformanceAdaptiveScaling;
         _hotkeyStart    = svc.Settings.HotkeyStartStop;
         _hotkeyPause    = svc.Settings.HotkeyPauseResume;
@@ -113,6 +114,9 @@ public class SettingsViewModel : INotifyPropertyChanged
     private bool _hwAccel;
     public  bool HwAccel { get => _hwAccel; set { _hwAccel = value; OnPropertyChanged(); } }
 
+    private bool _gpuDirect;
+    public  bool GpuDirect { get => _gpuDirect; set { _gpuDirect = value; OnPropertyChanged(); } }
+
     private bool _adaptiveScaling;
     public  bool AdaptiveScaling { get => _adaptiveScaling; set { _adaptiveScaling = value; OnPropertyChanged(); } }
 
@@ -161,6 +165,7 @@ public class SettingsViewModel : INotifyPropertyChanged
         s.MicrophoneDeviceId = MicDeviceId;
         s.SystemAudioEnabled = SysAudio;
         s.HardwareAcceleration = HwAccel;
+        s.EnableGpuDirectPipeline = GpuDirect;
         s.EnablePerformanceAdaptiveScaling = AdaptiveScaling;
         s.HotkeyStartStop   = HotkeyStart;
         s.HotkeyPauseResume = HotkeyPause;
