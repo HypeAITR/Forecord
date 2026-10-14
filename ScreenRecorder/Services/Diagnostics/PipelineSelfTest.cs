@@ -40,7 +40,8 @@ public static class PipelineSelfTest
         {
             RunCase("1. H264Mp4Muxer Synthetic Annex-B -> MP4", TestMp4Muxer),
             RunCase("2. DXGI DesktopCapture Readback & GPU Frame", TestDesktopCapture),
-            RunCase("3. GPU Encoder Live Frame Encode (NVENC/AMF)", TestGpuEncoder)
+            RunCase("3. GPU Encoder 180-Frame Dynamic Color Stress", TestGpuEncoder),
+            RunCase("4. Full RecordingService E2E (Start -> Pause -> Resume -> Stop)", TestEndToEndRecordingLifecycle)
         };
 
         var allPassed = results.All(r => r.Passed);
@@ -210,23 +211,39 @@ public static class PipelineSelfTest
                     };
 
                     encoder.Initialize(cap.Device, new GpuEncoderSettings(cap.Width, cap.Height, 60, "Yüksek", tempMp4));
-                    for (var i = 0; i < 6; i++)
-                        encoder.EncodeTexture(synthTex, TimeSpan.FromMilliseconds(i * 16.67));
+                    var rtv = new SharpDX.Direct3D11.RenderTargetView(cap.Device, synthTex);
+                    try
+                    {
+                        for (var i = 0; i < 180; i++)
+                        {
+                            var r = (i * 5 % 255) / 255f;
+                            var g = (i * 11 % 255) / 255f;
+                            var b = (i * 17 % 255) / 255f;
+                            cap.Device.ImmediateContext.ClearRenderTargetView(
+                                rtv,
+                                new SharpDX.Mathematics.Interop.RawColor4(r, g, b, 1f));
+                            encoder.EncodeTexture(synthTex, TimeSpan.FromMilliseconds(i * 16.67));
+                        }
+                    }
+                    finally
+                    {
+                        rtv.Dispose();
+                    }
                     encoder.FinishAsync().GetAwaiter().GetResult();
                     muxer.Finish();
                 }
 
                 var mp4Size = new FileInfo(tempMp4).Length;
-                if (packets == 0 || mp4Size < 256)
+                if (packets < 100 || mp4Size < 2048)
                     throw new InvalidOperationException($"NVENC own-mux produced insufficient output (packets={packets}, mp4Bytes={mp4Size}).");
 
                 var encoderSvc = new EncoderService();
                 encoderSvc.FindFFmpeg();
-                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 256).GetAwaiter().GetResult();
+                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 1024).GetAwaiter().GetResult();
                 if (!decodable)
                     throw new InvalidOperationException("NVENC own-mux produced an MP4 file, but FFmpeg probe could not decode any video frame from it.");
 
-                return $"NVENC direct -> H264Mp4Muxer encoded {packets} packet(s), {totalBytes} bitstream bytes, FFmpeg-verified decodable MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
+                return $"NVENC direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes} bitstream bytes, FFmpeg-verified MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
             }
             finally
             {
@@ -260,23 +277,39 @@ public static class PipelineSelfTest
                     };
 
                     encoder.Initialize(cap.Device, new GpuEncoderSettings(cap.Width, cap.Height, 60, "Yüksek", tempMp4));
-                    for (var i = 0; i < 6; i++)
-                        encoder.EncodeTexture(synthTex, TimeSpan.FromMilliseconds(i * 16.67));
+                    var rtv = new SharpDX.Direct3D11.RenderTargetView(cap.Device, synthTex);
+                    try
+                    {
+                        for (var i = 0; i < 180; i++)
+                        {
+                            var r = (i * 5 % 255) / 255f;
+                            var g = (i * 11 % 255) / 255f;
+                            var b = (i * 17 % 255) / 255f;
+                            cap.Device.ImmediateContext.ClearRenderTargetView(
+                                rtv,
+                                new SharpDX.Mathematics.Interop.RawColor4(r, g, b, 1f));
+                            encoder.EncodeTexture(synthTex, TimeSpan.FromMilliseconds(i * 16.67));
+                        }
+                    }
+                    finally
+                    {
+                        rtv.Dispose();
+                    }
                     encoder.FinishAsync().GetAwaiter().GetResult();
                     muxer.Finish();
                 }
 
                 var mp4Size = new FileInfo(tempMp4).Length;
-                if (packets == 0 || mp4Size < 256)
+                if (packets < 100 || mp4Size < 2048)
                     throw new InvalidOperationException($"AMF own-mux produced insufficient output (packets={packets}, mp4Bytes={mp4Size}).");
 
                 var encoderSvc = new EncoderService();
                 encoderSvc.FindFFmpeg();
-                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 256).GetAwaiter().GetResult();
+                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 1024).GetAwaiter().GetResult();
                 if (!decodable)
                     throw new InvalidOperationException("AMF own-mux produced an MP4 file, but FFmpeg probe could not decode any video frame from it.");
 
-                return $"AMF direct -> H264Mp4Muxer encoded {packets} packet(s), {totalBytes} bitstream bytes, FFmpeg-verified decodable MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
+                return $"AMF direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes} bitstream bytes, FFmpeg-verified MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
             }
             finally
             {
@@ -285,5 +318,78 @@ public static class PipelineSelfTest
         }
 
         return $"Skipped direct GPU encode test (adapter vendor is {adapter.VendorName}; FFmpeg fallback applies).";
+    }
+
+    private static string TestEndToEndRecordingLifecycle()
+    {
+        var tempOutDir = Path.Combine(Path.GetTempPath(), "Forecord", "selftest_e2e_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempOutDir);
+
+        var encoderSvc = new EncoderService();
+        encoderSvc.FindFFmpeg();
+        using var audioSvc = new AudioService();
+        var fileSvc = new FileService();
+        using var recSvc = new RecordingService(encoderSvc, audioSvc, fileSvc);
+
+        var settings = new Models.AppSettings
+        {
+            OutputDirectory = tempOutDir,
+            Fps = 60,
+            Quality = "Yüksek",
+            OutputResolution = "Native",
+            MicrophoneEnabled = false,
+            SystemAudioEnabled = false,
+            EnableGpuDirectPipeline = true,
+            MonitorIndex = 0
+        };
+
+        // Keep a small background cursor wiggle so DXGI Desktop Duplication
+        // delivers live frames during automated testing even if the user isn't
+        // touching the mouse.
+        using var wiggleCts = new CancellationTokenSource();
+        var wiggleTask = Task.Run(async () =>
+        {
+            var toggle = false;
+            while (!wiggleCts.IsCancellationRequested)
+            {
+                var pt = System.Windows.Forms.Cursor.Position;
+                System.Windows.Forms.Cursor.Position = new System.Drawing.Point(pt.X + (toggle ? 1 : -1), pt.Y);
+                toggle = !toggle;
+                await Task.Delay(30).ConfigureAwait(false);
+            }
+        });
+
+        string? finalPath = null;
+        try
+        {
+            Task.Run(async () =>
+            {
+                await recSvc.StartAsync(settings).ConfigureAwait(false);
+                await Task.Delay(2500).ConfigureAwait(false);
+                recSvc.Pause();
+                await Task.Delay(400).ConfigureAwait(false);
+                await recSvc.ResumeAsync().ConfigureAwait(false);
+                await Task.Delay(2500).ConfigureAwait(false);
+                finalPath = await recSvc.StopAsync().ConfigureAwait(false);
+            }).GetAwaiter().GetResult();
+
+            wiggleCts.Cancel();
+            try { wiggleTask.GetAwaiter().GetResult(); } catch { }
+
+            if (string.IsNullOrWhiteSpace(finalPath) || !File.Exists(finalPath))
+                throw new InvalidOperationException("StopAsync did not produce an output file.");
+
+            var size = new FileInfo(finalPath).Length;
+            var decodable = Task.Run(() => encoderSvc.ProbeSegmentAsync(finalPath, minBytes: 1024)).GetAwaiter().GetResult();
+            if (!decodable)
+                throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg decode verification.");
+
+            return $"Full Start(2.5s) -> Pause -> Resume(2.5s) -> Stop succeeded: {Path.GetFileName(finalPath)} ({size} bytes, FFmpeg decode verified).";
+        }
+        finally
+        {
+            wiggleCts.Cancel();
+            try { if (Directory.Exists(tempOutDir)) Directory.Delete(tempOutDir, true); } catch { }
+        }
     }
 }

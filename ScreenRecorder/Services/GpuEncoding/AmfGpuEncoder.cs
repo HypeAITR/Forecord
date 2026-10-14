@@ -113,7 +113,9 @@ public sealed class AmfGpuEncoder : IGpuEncoder
                  (status == AmfNative.AmfInputFull || status == AmfNative.AmfRepeat) && retry < 15;
                  retry++)
             {
-                DrainAvailableOutput(waitForPacket: true, cancellationToken: default);
+                DrainAvailableOutput(waitForPacket: false, cancellationToken: default);
+                if (retry > 0)
+                    Thread.Sleep(1);
                 status = submit(_component, surface);
             }
 
