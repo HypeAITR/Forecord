@@ -8,10 +8,12 @@ namespace ScreenRecorder.Services.Muxing;
 internal sealed class H264Mp4Muxer : IDisposable
 {
     private const uint Timescale = 1_000_000;
+    private const int FtypBoxSize = 32;
+    private const int MdatHeaderSize = 16; // 64-bit mdat header (size=1 + 'mdat' + uint64 size)
+    private const long MdatPayloadStartOffset = FtypBoxSize + MdatHeaderSize; // 48 bytes
 
     private readonly string _outputPath;
-    private readonly string _mdatPath;
-    private readonly FileStream _mdat;
+    private readonly FileStream _output;
     private readonly int _width;
     private readonly int _height;
     private readonly uint _defaultDuration;
@@ -20,18 +22,26 @@ internal sealed class H264Mp4Muxer : IDisposable
     private byte[]? _sps;
     private byte[]? _pps;
     private TimeSpan? _lastPts;
+    private long _mdatBytesWritten;
     private bool _finished;
 
     public H264Mp4Muxer(string outputPath, int width, int height, int fps)
     {
         _outputPath = outputPath;
-        _mdatPath = outputPath + ".mdat.tmp";
         _width = width;
         _height = height;
         _defaultDuration = ToDurationUnits(TimeSpan.FromSeconds(1.0 / Math.Max(1, fps)));
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-        _mdat = new FileStream(_mdatPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+        _output = new FileStream(
+            _outputPath,
+            FileMode.Create,
+            FileAccess.ReadWrite,
+            FileShare.Read,
+            bufferSize: 256 * 1024);
+
+        // Reserve 48 bytes at the start for ftyp (32B) + 64-bit mdat header (16B).
+        _output.Write(new byte[MdatPayloadStartOffset]);
     }
 
     public int SampleCount => _samples.Count;
@@ -59,8 +69,9 @@ internal sealed class H264Mp4Muxer : IDisposable
             };
         }
 
-        var offset = _mdat.Position;
-        _mdat.Write(sampleBytes);
+        var offset = _mdatBytesWritten;
+        _output.Write(sampleBytes);
+        _mdatBytesWritten += sampleBytes.Length;
 
         var sampleDuration = duration > TimeSpan.Zero
             ? ToDurationUnits(duration)
@@ -77,14 +88,37 @@ internal sealed class H264Mp4Muxer : IDisposable
     {
         if (_finished) return;
         _finished = true;
-        _mdat.Flush();
 
         if (_samples.Count == 0)
             throw new InvalidOperationException("Own MP4 muxer did not receive any encoded H.264 samples.");
         if (_sps is not { Length: >= 4 } || _pps is not { Length: > 0 })
             throw new InvalidOperationException("Own MP4 muxer could not find H.264 SPS/PPS in the NVENC stream.");
 
-        var ftyp = Box("ftyp", payload =>
+        var ftyp = BuildFtypBox();
+        var mdatDataStart = (ulong)MdatPayloadStartOffset;
+        uint duration = 0;
+        for (var i = 0; i < _samples.Count; i++)
+            duration += _samples[i].Duration;
+
+        var moov = BuildMoov(duration, mdatDataStart);
+
+        // 1. Append moov box directly at the current end of the file (right after mdat payload).
+        _output.Write(moov);
+
+        // 2. Seek back to 0 and patch the 48-byte ftyp + 64-bit mdat header in-place (zero copy!).
+        _output.Position = 0;
+        _output.Write(ftyp);
+        WriteUInt32(_output, 1);
+        WriteAscii(_output, "mdat");
+        WriteUInt64(_output, (ulong)_mdatBytesWritten + MdatHeaderSize);
+        _output.Flush();
+
+        Debug.WriteLine(
+            $"[OwnMux] wrote MP4 in-place samples={_samples.Count} bytes={_output.Length} path={_outputPath}");
+    }
+
+    private static byte[] BuildFtypBox() =>
+        Box("ftyp", payload =>
         {
             WriteAscii(payload, "isom");
             WriteUInt32(payload, 0x00000200);
@@ -93,35 +127,6 @@ internal sealed class H264Mp4Muxer : IDisposable
             WriteAscii(payload, "avc1");
             WriteAscii(payload, "mp41");
         });
-
-        var mdatPayloadSize = _mdat.Length;
-        var useLargeMdat = mdatPayloadSize + 8 > uint.MaxValue;
-        var mdatHeaderSize = useLargeMdat ? 16 : 8;
-        var mdatDataStart = (ulong)(ftyp.Length + mdatHeaderSize);
-        var duration = _samples.Aggregate(0u, (sum, sample) => sum + sample.Duration);
-        var moov = BuildMoov(duration, mdatDataStart);
-
-        using var output = new FileStream(_outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        output.Write(ftyp);
-        if (useLargeMdat)
-        {
-            WriteUInt32(output, 1);
-            WriteAscii(output, "mdat");
-            WriteUInt64(output, (ulong)mdatPayloadSize + 16);
-        }
-        else
-        {
-            WriteUInt32(output, checked((uint)mdatPayloadSize + 8));
-            WriteAscii(output, "mdat");
-        }
-
-        _mdat.Position = 0;
-        _mdat.CopyTo(output);
-        output.Write(moov);
-
-        Debug.WriteLine(
-            $"[OwnMux] wrote MP4 samples={_samples.Count} bytes={new FileInfo(_outputPath).Length} path={_outputPath}");
-    }
 
     public static bool TryConcatenateSegments(IReadOnlyList<string> segmentPaths, string outputPath)
     {
@@ -137,50 +142,62 @@ internal sealed class H264Mp4Muxer : IDisposable
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-            var tempMdatPath = outputPath + ".concat.mdat.tmp";
             var combinedSamples = new List<Sample>();
             byte[]? firstSps = null;
             byte[]? firstPps = null;
             var width = 0;
             var height = 0;
+            long totalMdatPayloadBytes = 0;
 
-            try
+            using (var output = new FileStream(
+                       outputPath,
+                       FileMode.Create,
+                       FileAccess.ReadWrite,
+                       FileShare.Read,
+                       bufferSize: 256 * 1024))
             {
-                using (var mdatOut = new FileStream(tempMdatPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+                output.Write(new byte[MdatPayloadStartOffset]);
+
+                foreach (var segPath in segmentPaths)
                 {
-                    foreach (var segPath in segmentPaths)
-                    {
-                        if (!File.Exists(segPath) || !TryParseOwnMp4Segment(segPath, out var parsed))
-                            return false;
-
-                        firstSps ??= parsed.Sps;
-                        firstPps ??= parsed.Pps;
-                        if (width == 0) width = parsed.Width;
-                        if (height == 0) height = parsed.Height;
-
-                        using var segStream = new FileStream(segPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                        foreach (var s in parsed.Samples)
-                        {
-                            var newOffset = mdatOut.Position;
-                            segStream.Position = (long)s.FileOffset;
-                            CopyBytes(segStream, mdatOut, s.Size);
-                            combinedSamples.Add(new Sample(newOffset, s.Size, s.Duration, s.IsKeyframe));
-                        }
-                    }
-
-                    mdatOut.Flush();
-                    if (combinedSamples.Count == 0 || firstSps == null || firstPps == null || width <= 0 || height <= 0)
+                    if (!File.Exists(segPath) || !TryParseOwnMp4Segment(segPath, out var parsed))
                         return false;
 
-                    WriteMp4File(outputPath, mdatOut, combinedSamples, firstSps, firstPps, width, height);
+                    firstSps ??= parsed.Sps;
+                    firstPps ??= parsed.Pps;
+                    if (width == 0) width = parsed.Width;
+                    if (height == 0) height = parsed.Height;
+
+                    using var segStream = new FileStream(segPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    foreach (var s in parsed.Samples)
+                    {
+                        var newOffset = totalMdatPayloadBytes;
+                        segStream.Position = (long)s.FileOffset;
+                        CopyBytes(segStream, output, s.Size);
+                        totalMdatPayloadBytes += s.Size;
+                        combinedSamples.Add(new Sample(newOffset, s.Size, s.Duration, s.IsKeyframe));
+                    }
                 }
 
-                return File.Exists(outputPath) && new FileInfo(outputPath).Length > 256;
+                if (combinedSamples.Count == 0 || firstSps == null || firstPps == null || width <= 0 || height <= 0)
+                    return false;
+
+                uint duration = 0;
+                for (var i = 0; i < combinedSamples.Count; i++)
+                    duration += combinedSamples[i].Duration;
+
+                var moov = BuildMoovStatic(width, height, firstSps, firstPps, combinedSamples, duration, (ulong)MdatPayloadStartOffset);
+                output.Write(moov);
+
+                output.Position = 0;
+                output.Write(BuildFtypBox());
+                WriteUInt32(output, 1);
+                WriteAscii(output, "mdat");
+                WriteUInt64(output, (ulong)totalMdatPayloadBytes + MdatHeaderSize);
+                output.Flush();
             }
-            finally
-            {
-                try { if (File.Exists(tempMdatPath)) File.Delete(tempMdatPath); } catch { }
-            }
+
+            return File.Exists(outputPath) && new FileInfo(outputPath).Length > 256;
         }
         catch (Exception ex)
         {
@@ -189,55 +206,29 @@ internal sealed class H264Mp4Muxer : IDisposable
         }
     }
 
-    private static void WriteMp4File(
-        string outputPath,
-        FileStream mdat,
-        List<Sample> samples,
+    private static byte[] BuildMoovStatic(
+        int width,
+        int height,
         byte[] sps,
         byte[] pps,
-        int width,
-        int height)
+        List<Sample> samples,
+        uint duration,
+        ulong mdatDataStart)
     {
-        using var muxer = new H264Mp4Muxer(outputPath + ".hdr.tmp", width, height, 60);
-        muxer._sps = sps;
-        muxer._pps = pps;
-        muxer._samples.AddRange(samples);
-        muxer._finished = true;
-
-        var ftyp = Box("ftyp", payload =>
+        var tempPath = Path.Combine(Path.GetTempPath(), $"forecord_hdr_{Guid.NewGuid():N}.tmp");
+        try
         {
-            WriteAscii(payload, "isom");
-            WriteUInt32(payload, 0x00000200);
-            WriteAscii(payload, "isom");
-            WriteAscii(payload, "iso6");
-            WriteAscii(payload, "avc1");
-            WriteAscii(payload, "mp41");
-        });
-
-        var mdatPayloadSize = mdat.Length;
-        var useLargeMdat = mdatPayloadSize + 8 > uint.MaxValue;
-        var mdatHeaderSize = useLargeMdat ? 16 : 8;
-        var mdatDataStart = (ulong)(ftyp.Length + mdatHeaderSize);
-        var duration = samples.Aggregate(0u, (sum, sample) => sum + sample.Duration);
-        var moov = muxer.BuildMoov(duration, mdatDataStart);
-
-        using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        output.Write(ftyp);
-        if (useLargeMdat)
-        {
-            WriteUInt32(output, 1);
-            WriteAscii(output, "mdat");
-            WriteUInt64(output, (ulong)mdatPayloadSize + 16);
+            using var muxer = new H264Mp4Muxer(tempPath, width, height, 60);
+            muxer._sps = sps;
+            muxer._pps = pps;
+            muxer._samples.AddRange(samples);
+            muxer._finished = true;
+            return muxer.BuildMoov(duration, mdatDataStart);
         }
-        else
+        finally
         {
-            WriteUInt32(output, checked((uint)mdatPayloadSize + 8));
-            WriteAscii(output, "mdat");
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
         }
-
-        mdat.Position = 0;
-        mdat.CopyTo(output);
-        output.Write(moov);
     }
 
     private static void CopyBytes(Stream source, Stream destination, int count)
@@ -270,45 +261,53 @@ internal sealed class H264Mp4Muxer : IDisposable
     private static bool TryParseOwnMp4Segment(string path, out ParsedSegment result)
     {
         result = null!;
-        var bytes = File.ReadAllBytes(path);
-        if (bytes.Length < 128)
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (fs.Length < 128)
             return false;
 
-        // Locate moov box at the end of the file
-        var offset = 0;
-        var moovStart = -1;
-        var moovSize = 0;
-        while (offset + 8 <= bytes.Length)
+        // Locate moov box at the end of the file without loading mdat into RAM!
+        long offset = 0;
+        byte[]? moovBytes = null;
+        Span<byte> hdr = stackalloc byte[16];
+        while (offset + 8 <= fs.Length)
         {
-            var size32 = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset, 4));
-            var type = Encoding.ASCII.GetString(bytes, offset + 4, 4);
+            fs.Position = offset;
+            if (fs.Read(hdr.Slice(0, 8)) != 8)
+                return false;
+
+            var size32 = BinaryPrimitives.ReadUInt32BigEndian(hdr.Slice(0, 4));
+            var type = Encoding.ASCII.GetString(hdr.Slice(4, 4));
             long boxSize = size32;
             var headerLen = 8;
             if (size32 == 1)
             {
-                if (offset + 16 > bytes.Length) return false;
-                boxSize = (long)BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(offset + 8, 8));
+                if (offset + 16 > fs.Length || fs.Read(hdr.Slice(8, 8)) != 8)
+                    return false;
+                boxSize = (long)BinaryPrimitives.ReadUInt64BigEndian(hdr.Slice(8, 8));
                 headerLen = 16;
             }
             else if (size32 == 0)
             {
-                boxSize = bytes.Length - offset;
+                boxSize = fs.Length - offset;
             }
 
-            if (boxSize < headerLen || offset + boxSize > bytes.Length)
+            if (boxSize < headerLen || offset + boxSize > fs.Length)
                 return false;
 
             if (type == "moov")
             {
-                moovStart = offset + headerLen;
-                moovSize = (int)(boxSize - headerLen);
+                var moovPayloadLen = checked((int)(boxSize - headerLen));
+                moovBytes = new byte[moovPayloadLen];
+                fs.Position = offset + headerLen;
+                if (fs.Read(moovBytes, 0, moovPayloadLen) != moovPayloadLen)
+                    return false;
                 break;
             }
 
-            offset += (int)boxSize;
+            offset += boxSize;
         }
 
-        if (moovStart < 0)
+        if (moovBytes == null)
             return false;
 
         int width = 0, height = 0;
@@ -318,22 +317,21 @@ internal sealed class H264Mp4Muxer : IDisposable
         var offsets = new List<ulong>();
         var keyframes = new HashSet<int>();
 
-        ParseBoxesRecursive(bytes, moovStart, moovStart + moovSize, (boxType, payloadPos, payloadLen) =>
+        ParseBoxesRecursive(moovBytes, 0, moovBytes.Length, (boxType, payloadPos, payloadLen) =>
         {
-            var span = bytes.AsSpan(payloadPos, payloadLen);
+            var span = moovBytes.AsSpan(payloadPos, payloadLen);
             if (boxType == "avc1" && payloadLen >= 78)
             {
                 width = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(24, 2));
                 height = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(26, 2));
-                // avcC is nested inside avc1 at offset 78
                 if (payloadLen > 86)
                 {
                     var avccPos = payloadPos + 78;
-                    var avccLen = (int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(avccPos, 4));
-                    var avccType = Encoding.ASCII.GetString(bytes, avccPos + 4, 4);
+                    var avccLen = (int)BinaryPrimitives.ReadUInt32BigEndian(moovBytes.AsSpan(avccPos, 4));
+                    var avccType = Encoding.ASCII.GetString(moovBytes, avccPos + 4, 4);
                     if (avccType == "avcC" && avccPos + avccLen <= payloadPos + payloadLen)
                     {
-                        var avcc = bytes.AsSpan(avccPos + 8, avccLen - 8);
+                        var avcc = moovBytes.AsSpan(avccPos + 8, avccLen - 8);
                         var spsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(6, 2));
                         sps = avcc.Slice(8, spsLen).ToArray();
                         var ppsCountPos = 8 + spsLen;
@@ -421,8 +419,7 @@ internal sealed class H264Mp4Muxer : IDisposable
         }
         finally
         {
-            _mdat.Dispose();
-            try { if (File.Exists(_mdatPath)) File.Delete(_mdatPath); } catch { }
+            _output.Dispose();
         }
     }
 

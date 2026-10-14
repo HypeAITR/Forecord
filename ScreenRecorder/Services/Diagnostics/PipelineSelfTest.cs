@@ -263,6 +263,7 @@ public static class PipelineSelfTest
             {
                 var packets = 0;
                 var totalBytes = 0;
+                long finishElapsedMs = 0;
                 using (var muxer = new H264Mp4Muxer(tempMp4, cap.Width, cap.Height, 60))
                 using (var encoder = new AmfGpuEncoder())
                 {
@@ -296,7 +297,10 @@ public static class PipelineSelfTest
                         rtv.Dispose();
                     }
                     encoder.FinishAsync().GetAwaiter().GetResult();
+                    var finishSw = Stopwatch.StartNew();
                     muxer.Finish();
+                    finishSw.Stop();
+                    finishElapsedMs = finishSw.ElapsedMilliseconds;
                 }
 
                 var mp4Size = new FileInfo(tempMp4).Length;
@@ -309,7 +313,7 @@ public static class PipelineSelfTest
                 if (!decodable)
                     throw new InvalidOperationException("AMF own-mux produced an MP4 file, but FFmpeg probe could not decode any video frame from it.");
 
-                return $"AMF direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes} bitstream bytes, FFmpeg-verified MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
+                return $"AMF direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes}B bitstream, Finish={finishElapsedMs}ms, FFmpeg-verified MP4 ({mp4Size}B).";
             }
             finally
             {
