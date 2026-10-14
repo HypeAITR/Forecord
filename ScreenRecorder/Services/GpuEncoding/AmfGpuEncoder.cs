@@ -271,7 +271,8 @@ public sealed class AmfGpuEncoder : IGpuEncoder
         while (emptyPolls < maxEmptyPolls)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var status = query(_component, out var data);
+            var data = IntPtr.Zero;
+            var status = query(_component, out data);
             if (status == AmfNative.AmfOk && data != IntPtr.Zero)
             {
                 try
@@ -286,9 +287,6 @@ public sealed class AmfGpuEncoder : IGpuEncoder
                 emptyPolls = 0;
                 continue;
             }
-
-            if (data != IntPtr.Zero)
-                AmfNative.ReleaseInterface(data);
 
             if (status == AmfNative.AmfEof)
                 break;
