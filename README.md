@@ -114,7 +114,6 @@ Forecord/
     │   ├── RecordingService.cs      # Kayıt akışı, VFR zamanlama ve segment yönetimi
     │   ├── EncoderService.cs        # FFmpeg süreç yönetimi, donanım kodlayıcı tespiti ve muxing
     │   ├── AudioService.cs          # WASAPI ses yakalama ve Named Pipe veri akışı
-    │   ├── SothelCaptureEngine.cs   # Yakalama oturumu ve telemetri yönetimi
     │   ├── HotkeyService.cs         # Win32 global klavye kısayolu yönetimi
     │   ├── SettingsService.cs       # Kullanıcı yapılandırma yönetimi (%AppData%\Forecord)
     │   ├── FileService.cs           # Çıktı ve geçici dosya yönetimi
@@ -237,7 +236,6 @@ Forecord/
     │   ├── RecordingService.cs      # Capture loop, VFR pacing, and segment orchestration
     │   ├── EncoderService.cs        # FFmpeg process management, hardware probing, and muxing
     │   ├── AudioService.cs          # WASAPI audio capture and Named Pipe streaming
-    │   ├── SothelCaptureEngine.cs   # Capture session and telemetry management
     │   ├── HotkeyService.cs         # Win32 global hotkey registration
     │   ├── SettingsService.cs       # JSON configuration persistence (%AppData%\Forecord)
     │   ├── FileService.cs           # Output and temporary file management

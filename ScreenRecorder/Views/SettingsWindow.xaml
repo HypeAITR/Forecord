@@ -81,31 +81,6 @@
                     <TextBlock Text="GENEL" Style="{StaticResource SectionTitle}"/>
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
-                            <TextBlock Text="Mod" Style="{StaticResource Label}"/>
-                            <ComboBox Style="{StaticResource CB}" Margin="0,0,0,12"
-                                      ItemsSource="{Binding CaptureModeOptions}"
-                                      SelectedItem="{Binding CaptureMode}"/>
-
-                            <StackPanel Visibility="{Binding IsCaptureMode, Converter={StaticResource BoolToVisibility}}"
-                                        Margin="0,0,0,16">
-                                <TextBlock Text="Capture Kapısı" Style="{StaticResource Label}"/>
-                                <TextBlock Text="{Binding CaptureTechnique}"
-                                           FontSize="12"
-                                           Foreground="{StaticResource TextBrush}"
-                                           FontWeight="SemiBold"
-                                           Margin="0,0,0,8"/>
-                                <TextBlock Text="{Binding CaptureTechniqueDetail}"
-                                           TextWrapping="Wrap"
-                                           FontSize="11"
-                                           Foreground="{StaticResource SubTextBrush}"
-                                           Margin="0,0,0,4"/>
-                                <TextBlock Text="{Binding CaptureTechniqueGate}"
-                                           TextWrapping="Wrap"
-                                           FontSize="11"
-                                           Foreground="{StaticResource SubTextBrush}"
-                                           Opacity="0.85"/>
-                            </StackPanel>
-
                             <TextBlock Text="Kayıt Klasörü" Style="{StaticResource Label}"/>
                             <Grid Margin="0,0,0,16">
                                 <Grid.ColumnDefinitions>

@@ -9,9 +9,6 @@ public class AppSettings
 
     public int Fps { get; set; } = 60;
 
-    public string CaptureMode { get; set; } = RecordingCaptureMode.Normal;
-    public string CaptureTechnique { get; set; } = RecordingCaptureMode.Capture;
-
     // "Düşük" | "Orta" | "Yüksek"
     public string Quality { get; set; } = "Yüksek";
 

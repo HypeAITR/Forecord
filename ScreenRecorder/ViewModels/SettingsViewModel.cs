@@ -16,8 +16,6 @@ public class SettingsViewModel : INotifyPropertyChanged
         // Yerel kopyaları ayarlardan oku
         _outputDir      = svc.Settings.OutputDirectory;
         _fps            = svc.Settings.Fps;
-        _captureMode    = RecordingCaptureMode.Normalize(svc.Settings.CaptureMode);
-        _captureTechnique = SothelCaptureEngine.Name;
         _quality        = svc.Settings.Quality;
         _resolution     = svc.Settings.OutputResolution;
         _micDeviceId    = svc.Settings.MicrophoneDeviceId;
@@ -44,39 +42,6 @@ public class SettingsViewModel : INotifyPropertyChanged
     public  string OutputDir { get => _outputDir; set { _outputDir = value; OnPropertyChanged(); } }
 
     private int _fps;
-
-    private string _captureMode;
-    public string CaptureMode
-    {
-        get => _captureMode;
-        set
-        {
-            _captureMode = RecordingCaptureMode.Normalize(value);
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsCaptureMode));
-        }
-    }
-
-    public bool IsCaptureMode => RecordingCaptureMode.IsCapture(CaptureMode);
-
-    private string _captureTechnique;
-    public string CaptureTechnique
-    {
-        get => _captureTechnique;
-        set
-        {
-            _captureTechnique = SothelCaptureEngine.Name;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(CaptureTechniqueDetail));
-            OnPropertyChanged(nameof(CaptureTechniqueGate));
-        }
-    }
-
-    public string CaptureTechniqueDetail =>
-        SothelCaptureEngine.Summary;
-
-    public string CaptureTechniqueGate =>
-        SothelCaptureEngine.Gate;
 
     private string _quality;
     public  string Quality { get => _quality; set { _quality = value; OnPropertyChanged(); } }
@@ -167,13 +132,6 @@ public class SettingsViewModel : INotifyPropertyChanged
     public List<string> QualityOptions    { get; } = new() { "Düşük", "Orta", "Yüksek" };
     public List<int>    FpsOptions        { get; } = new() { 30, 60, 120 };
     public List<string> ResolutionOptions { get; } = new() { "Native", "1080p", "1440p", "4K" };
-    public List<string> CaptureModeOptions { get; } = new() { RecordingCaptureMode.Normal, RecordingCaptureMode.Capture };
-    public List<string> CaptureTechniqueOptions { get; } = new() { SothelCaptureEngine.Name };
-    public List<string> CaptureTechniqueDescriptions { get; } = new()
-    {
-        SothelCaptureEngine.Summary,
-        SothelCaptureEngine.Gate
-    };
 
     // ─── Komutlar ─────────────────────────────────────────────────────────────
     public RelayCommand BrowseFolderCommand { get; }
@@ -197,8 +155,6 @@ public class SettingsViewModel : INotifyPropertyChanged
         var s = _svc.Settings;
         s.OutputDirectory   = OutputDir;
         s.Fps               = Fps;
-        s.CaptureMode       = RecordingCaptureMode.Normalize(CaptureMode);
-        s.CaptureTechnique  = SothelCaptureEngine.Name;
         s.Quality           = Quality;
         s.OutputResolution  = Resolution;
         s.MicrophoneDeviceId = MicDeviceId;
