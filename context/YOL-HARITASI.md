@@ -14,7 +14,7 @@ Ayrıntılı teknik plan `context/GPU-DIRECT-PLAN.md` dosyasındadır:
 - [x] **Faz 0 (2026-10-14):** `RecordingService.cs` (1450+ satırdan ~540 satıra) Modülerleştirme + Hata Tanılama (`RecordingDiagnostics`) ve Öz-Test (`PipelineSelfTest` / `--self-test`) Altyapısı. (Testler sırasında AMD `AmfGpuEncoder` içindeki double-free `0xc0000409` çökmesi yakalanıp düzeltildi!)
 - [x] **Faz 1 (2026-10-14):** GPU Kodlayıcıların (`NvencGpuEncoder`, `AmfGpuEncoder`) Sıfır-Tahsis (Zero-Allocation) ve Kalite/GOP Optimizasyonu. (Her karede doku/bitstream yaratma kaldırıldı; canlı GPU -> `H264Mp4Muxer` -> FFmpeg decode doğrulaması geçti.)
 - [x] **Faz 2 (2026-10-14):** GPU-Direct Döngüsünde Fare İmleci (`CompositeCursorOnGpuTexture`), Lazy Screenshot (`ReadbackFullTexture`) ve VFR Keepalive/Telemetri Desteği.
-- [ ] **Faz 3:** GPU-Direct Çoklu Segment (Pause/Resume) ve Çözünürlük Ölçekleme Desteği.
+- [x] **Faz 3 (2026-10-14):** GPU-Direct Çoklu Segment (`H264Mp4Muxer.TryConcatenateSegments`) ve Çözünürlük Ölçekleme (`D3D11TextureScaler`) Desteği.
 - [ ] **Faz 4:** `H264Mp4Muxer` Ses (AAC Track) Entegrasyonu (ses açıkken de FFmpeg'siz kayıt).
 - [ ] **Faz 5:** Ayarlar Penceresi (`EnableGpuDirectPipeline`) Entegrasyonu ve Otomatik Fallback.
 

@@ -123,6 +123,295 @@ internal sealed class H264Mp4Muxer : IDisposable
             $"[OwnMux] wrote MP4 samples={_samples.Count} bytes={new FileInfo(_outputPath).Length} path={_outputPath}");
     }
 
+    public static bool TryConcatenateSegments(IReadOnlyList<string> segmentPaths, string outputPath)
+    {
+        if (segmentPaths.Count == 0)
+            return false;
+
+        if (segmentPaths.Count == 1)
+        {
+            File.Copy(segmentPaths[0], outputPath, true);
+            return File.Exists(outputPath) && new FileInfo(outputPath).Length > 256;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
+            var tempMdatPath = outputPath + ".concat.mdat.tmp";
+            var combinedSamples = new List<Sample>();
+            byte[]? firstSps = null;
+            byte[]? firstPps = null;
+            var width = 0;
+            var height = 0;
+
+            try
+            {
+                using (var mdatOut = new FileStream(tempMdatPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+                {
+                    foreach (var segPath in segmentPaths)
+                    {
+                        if (!File.Exists(segPath) || !TryParseOwnMp4Segment(segPath, out var parsed))
+                            return false;
+
+                        firstSps ??= parsed.Sps;
+                        firstPps ??= parsed.Pps;
+                        if (width == 0) width = parsed.Width;
+                        if (height == 0) height = parsed.Height;
+
+                        using var segStream = new FileStream(segPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        foreach (var s in parsed.Samples)
+                        {
+                            var newOffset = mdatOut.Position;
+                            segStream.Position = (long)s.FileOffset;
+                            CopyBytes(segStream, mdatOut, s.Size);
+                            combinedSamples.Add(new Sample(newOffset, s.Size, s.Duration, s.IsKeyframe));
+                        }
+                    }
+
+                    mdatOut.Flush();
+                    if (combinedSamples.Count == 0 || firstSps == null || firstPps == null || width <= 0 || height <= 0)
+                        return false;
+
+                    WriteMp4File(outputPath, mdatOut, combinedSamples, firstSps, firstPps, width, height);
+                }
+
+                return File.Exists(outputPath) && new FileInfo(outputPath).Length > 256;
+            }
+            finally
+            {
+                try { if (File.Exists(tempMdatPath)) File.Delete(tempMdatPath); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[OwnMux] TryConcatenateSegments failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void WriteMp4File(
+        string outputPath,
+        FileStream mdat,
+        List<Sample> samples,
+        byte[] sps,
+        byte[] pps,
+        int width,
+        int height)
+    {
+        using var muxer = new H264Mp4Muxer(outputPath + ".hdr.tmp", width, height, 60);
+        muxer._sps = sps;
+        muxer._pps = pps;
+        muxer._samples.AddRange(samples);
+        muxer._finished = true;
+
+        var ftyp = Box("ftyp", payload =>
+        {
+            WriteAscii(payload, "isom");
+            WriteUInt32(payload, 0x00000200);
+            WriteAscii(payload, "isom");
+            WriteAscii(payload, "iso6");
+            WriteAscii(payload, "avc1");
+            WriteAscii(payload, "mp41");
+        });
+
+        var mdatPayloadSize = mdat.Length;
+        var useLargeMdat = mdatPayloadSize + 8 > uint.MaxValue;
+        var mdatHeaderSize = useLargeMdat ? 16 : 8;
+        var mdatDataStart = (ulong)(ftyp.Length + mdatHeaderSize);
+        var duration = samples.Aggregate(0u, (sum, sample) => sum + sample.Duration);
+        var moov = muxer.BuildMoov(duration, mdatDataStart);
+
+        using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        output.Write(ftyp);
+        if (useLargeMdat)
+        {
+            WriteUInt32(output, 1);
+            WriteAscii(output, "mdat");
+            WriteUInt64(output, (ulong)mdatPayloadSize + 16);
+        }
+        else
+        {
+            WriteUInt32(output, checked((uint)mdatPayloadSize + 8));
+            WriteAscii(output, "mdat");
+        }
+
+        mdat.Position = 0;
+        mdat.CopyTo(output);
+        output.Write(moov);
+    }
+
+    private static void CopyBytes(Stream source, Stream destination, int count)
+    {
+        var buffer = new byte[Math.Min(65536, Math.Max(4096, count))];
+        var remaining = count;
+        while (remaining > 0)
+        {
+            var read = source.Read(buffer, 0, Math.Min(buffer.Length, remaining));
+            if (read <= 0)
+                throw new EndOfStreamException("Unexpected EOF while copying MP4 sample.");
+            destination.Write(buffer, 0, read);
+            remaining -= read;
+        }
+    }
+
+    private sealed record ParsedSegment(
+        int Width,
+        int Height,
+        byte[] Sps,
+        byte[] Pps,
+        List<ParsedSample> Samples);
+
+    private readonly record struct ParsedSample(
+        ulong FileOffset,
+        int Size,
+        uint Duration,
+        bool IsKeyframe);
+
+    private static bool TryParseOwnMp4Segment(string path, out ParsedSegment result)
+    {
+        result = null!;
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length < 128)
+            return false;
+
+        // Locate moov box at the end of the file
+        var offset = 0;
+        var moovStart = -1;
+        var moovSize = 0;
+        while (offset + 8 <= bytes.Length)
+        {
+            var size32 = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset, 4));
+            var type = Encoding.ASCII.GetString(bytes, offset + 4, 4);
+            long boxSize = size32;
+            var headerLen = 8;
+            if (size32 == 1)
+            {
+                if (offset + 16 > bytes.Length) return false;
+                boxSize = (long)BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(offset + 8, 8));
+                headerLen = 16;
+            }
+            else if (size32 == 0)
+            {
+                boxSize = bytes.Length - offset;
+            }
+
+            if (boxSize < headerLen || offset + boxSize > bytes.Length)
+                return false;
+
+            if (type == "moov")
+            {
+                moovStart = offset + headerLen;
+                moovSize = (int)(boxSize - headerLen);
+                break;
+            }
+
+            offset += (int)boxSize;
+        }
+
+        if (moovStart < 0)
+            return false;
+
+        int width = 0, height = 0;
+        byte[]? sps = null, pps = null;
+        var durations = new List<uint>();
+        var sizes = new List<int>();
+        var offsets = new List<ulong>();
+        var keyframes = new HashSet<int>();
+
+        ParseBoxesRecursive(bytes, moovStart, moovStart + moovSize, (boxType, payloadPos, payloadLen) =>
+        {
+            var span = bytes.AsSpan(payloadPos, payloadLen);
+            if (boxType == "avc1" && payloadLen >= 78)
+            {
+                width = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(24, 2));
+                height = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(26, 2));
+                // avcC is nested inside avc1 at offset 78
+                if (payloadLen > 86)
+                {
+                    var avccPos = payloadPos + 78;
+                    var avccLen = (int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(avccPos, 4));
+                    var avccType = Encoding.ASCII.GetString(bytes, avccPos + 4, 4);
+                    if (avccType == "avcC" && avccPos + avccLen <= payloadPos + payloadLen)
+                    {
+                        var avcc = bytes.AsSpan(avccPos + 8, avccLen - 8);
+                        var spsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(6, 2));
+                        sps = avcc.Slice(8, spsLen).ToArray();
+                        var ppsCountPos = 8 + spsLen;
+                        var ppsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(ppsCountPos + 1, 2));
+                        pps = avcc.Slice(ppsCountPos + 3, ppsLen).ToArray();
+                    }
+                }
+            }
+            else if (boxType == "stts" && payloadLen >= 8)
+            {
+                var entryCount = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
+                var p = 8;
+                for (var i = 0; i < entryCount && p + 8 <= payloadLen; i++, p += 8)
+                {
+                    var count = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4));
+                    var dur = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p + 4, 4));
+                    for (var c = 0; c < count; c++) durations.Add(dur);
+                }
+            }
+            else if (boxType == "stss" && payloadLen >= 8)
+            {
+                var entryCount = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
+                var p = 8;
+                for (var i = 0; i < entryCount && p + 4 <= payloadLen; i++, p += 4)
+                    keyframes.Add((int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4)) - 1);
+            }
+            else if (boxType == "stsz" && payloadLen >= 12)
+            {
+                var count = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(8, 4));
+                var p = 12;
+                for (var i = 0; i < count && p + 4 <= payloadLen; i++, p += 4)
+                    sizes.Add((int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4)));
+            }
+            else if (boxType == "co64" && payloadLen >= 8)
+            {
+                var count = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
+                var p = 8;
+                for (var i = 0; i < count && p + 8 <= payloadLen; i++, p += 8)
+                    offsets.Add(BinaryPrimitives.ReadUInt64BigEndian(span.Slice(p, 8)));
+            }
+        });
+
+        if (sps == null || pps == null || sizes.Count == 0 || sizes.Count != offsets.Count || sizes.Count != durations.Count)
+            return false;
+
+        var parsedSamples = new List<ParsedSample>(sizes.Count);
+        for (var i = 0; i < sizes.Count; i++)
+            parsedSamples.Add(new ParsedSample(offsets[i], sizes[i], durations[i], keyframes.Contains(i)));
+
+        result = new ParsedSegment(width, height, sps, pps, parsedSamples);
+        return true;
+    }
+
+    private static void ParseBoxesRecursive(
+        byte[] bytes,
+        int start,
+        int end,
+        Action<string, int, int> onBox)
+    {
+        var pos = start;
+        while (pos + 8 <= end)
+        {
+            var size = (int)BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(pos, 4));
+            var type = Encoding.ASCII.GetString(bytes, pos + 4, 4);
+            if (size < 8 || pos + size > end)
+                break;
+
+            var payloadPos = pos + 8;
+            var payloadLen = size - 8;
+            if (type is "trak" or "mdia" or "minf" or "stbl")
+                ParseBoxesRecursive(bytes, payloadPos, pos + size, onBox);
+            else
+                onBox(type, payloadPos, payloadLen);
+
+            pos += size;
+        }
+    }
+
     public void Dispose()
     {
         try

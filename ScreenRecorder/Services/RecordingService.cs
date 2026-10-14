@@ -254,6 +254,18 @@ public sealed class RecordingService : IDisposable
                 return outputPath;
             }
 
+            if (_gpuDirect.IsActive &&
+                micFiles.Count == 0 &&
+                sysFiles.Count == 0 &&
+                ScreenRecorder.Services.Muxing.H264Mp4Muxer.TryConcatenateSegments(validVideoSegments, outputPath))
+            {
+                RecordingDiagnostics.Info(
+                    DiagnosticStage.SegmentConcat,
+                    $"Concatenated {validVideoSegments.Count} GPU-Direct segments natively via H264Mp4Muxer: {outputPath}");
+                _ = Task.Run(() => _files.CleanupTemp(_tempDir));
+                return outputPath;
+            }
+
             var muxed = await _encoder.MuxFinalAsync(validVideoSegments, micFiles, sysFiles, outputPath);
             if (!muxed)
             {
@@ -717,6 +729,7 @@ public sealed class RecordingService : IDisposable
     {
         var targetH = preset switch
         {
+            "720p" => 720,
             "1080p" => 1080,
             "1440p" => 1440,
             "4K" => 2160,

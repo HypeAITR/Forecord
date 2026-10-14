@@ -17,6 +17,8 @@ internal sealed class GpuDirectSegmentRunner
     public string? BackendName { get; private set; }
     public string? SegmentPath { get; private set; }
     public string? LastError { get; private set; }
+    public int OutputWidth { get; private set; }
+    public int OutputHeight { get; private set; }
 
     public void Reset(AppSettings settings)
     {
@@ -25,6 +27,8 @@ internal sealed class GpuDirectSegmentRunner
         BackendName = null;
         SegmentPath = null;
         LastError = null;
+        OutputWidth = 0;
+        OutputHeight = 0;
     }
 
     public bool TryBeginSegment(
@@ -39,6 +43,8 @@ internal sealed class GpuDirectSegmentRunner
         IsActive = false;
         BackendName = null;
         SegmentPath = null;
+        OutputWidth = outW > 0 ? outW : screenW;
+        OutputHeight = outH > 0 ? outH : screenH;
 
         if (!IsRequested)
             return false;
@@ -57,14 +63,6 @@ internal sealed class GpuDirectSegmentRunner
             RecordingDiagnostics.Info(
                 DiagnosticStage.GpuProbe,
                 "GPU direct own mux env is set; audio is bypassed for this video-only mux test.");
-        }
-
-        if (outW != screenW || outH != screenH)
-        {
-            RecordingDiagnostics.Info(
-                DiagnosticStage.GpuProbe,
-                "GPU direct own mux requested, but output scaling is enabled; using FFmpeg path.");
-            return false;
         }
 
         DesktopAdapterInfo adapterInfo;
@@ -158,10 +156,32 @@ internal sealed class GpuDirectSegmentRunner
         long encodedCallbacks = 0;
         byte[]? lazyScreenshotBuffer = null;
 
+        var outW = OutputWidth > 0 ? OutputWidth : cap.Width;
+        var outH = OutputHeight > 0 ? OutputHeight : cap.Height;
+        var needsScaling = outW != cap.Width || outH != cap.Height;
+
         try
         {
-            using var muxer = new H264Mp4Muxer(segmentPath, cap.Width, cap.Height, settings.Fps);
+            using var muxer = new H264Mp4Muxer(segmentPath, outW, outH, settings.Fps);
             using var encoder = CreateEncoder();
+            using var scaler = needsScaling ? new D3D11TextureScaler(cap.Device, outW, outH) : null;
+            using var cursorCompositeTex = needsScaling
+                ? new SharpDX.Direct3D11.Texture2D(
+                    cap.Device,
+                    new SharpDX.Direct3D11.Texture2DDescription
+                    {
+                        Width = cap.Width,
+                        Height = cap.Height,
+                        MipLevels = 1,
+                        ArraySize = 1,
+                        Format = SharpDX.DXGI.Format.B8G8R8A8_UNorm,
+                        SampleDescription = new SharpDX.DXGI.SampleDescription(1, 0),
+                        Usage = SharpDX.Direct3D11.ResourceUsage.Default,
+                        BindFlags = SharpDX.Direct3D11.BindFlags.ShaderResource,
+                        CpuAccessFlags = SharpDX.Direct3D11.CpuAccessFlags.None,
+                        OptionFlags = SharpDX.Direct3D11.ResourceOptionFlags.None
+                    })
+                : null;
             using var lastDesktopTex = new SharpDX.Direct3D11.Texture2D(
                 cap.Device,
                 new SharpDX.Direct3D11.Texture2DDescription
@@ -177,6 +197,24 @@ internal sealed class GpuDirectSegmentRunner
                     CpuAccessFlags = SharpDX.Direct3D11.CpuAccessFlags.None,
                     OptionFlags = SharpDX.Direct3D11.ResourceOptionFlags.None
                 });
+
+            void EncodeDesktopWithCursorAndScale(SharpDX.Direct3D11.Texture2D desktopTex, TimeSpan pts)
+            {
+                if (scaler != null && cursorCompositeTex != null)
+                {
+                    cap.Device.ImmediateContext.CopyResource(desktopTex, cursorCompositeTex);
+                    cap.CompositeCursorOnGpuTexture(desktopTex, cursorCompositeTex);
+                    var scaledTex = scaler.Scale(cursorCompositeTex);
+                    encoder.EncodeTexture(scaledTex, pts);
+                }
+                else
+                {
+                    encoder.EncodeTexture(
+                        desktopTex,
+                        pts,
+                        target => cap.CompositeCursorOnGpuTexture(desktopTex, target));
+                }
+            }
 
             void AddEncodedPacket(byte[]? bitstream, long outputTimeStamp, long outputDuration, string pictureType)
             {
@@ -216,8 +254,8 @@ internal sealed class GpuDirectSegmentRunner
             encoder.Initialize(
                 cap.Device,
                 new GpuEncoderSettings(
-                    cap.Width,
-                    cap.Height,
+                    outW,
+                    outH,
                     settings.Fps,
                     settings.Quality,
                     segmentPath));
@@ -242,10 +280,7 @@ internal sealed class GpuDirectSegmentRunner
                         }
                     }
                     hasLastDesktop = true;
-                    encoder.EncodeTexture(
-                        lastDesktopTex,
-                        sw.Elapsed,
-                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    EncodeDesktopWithCursorAndScale(lastDesktopTex, sw.Elapsed);
                     lastEncodeAt = sw.Elapsed;
                     telemetry?.RecordEncodedFrame(cursorOnly: false);
                 }
@@ -257,10 +292,7 @@ internal sealed class GpuDirectSegmentRunner
                     acquiredFrames++;
                     cap.Device.ImmediateContext.CopyResource(firstGpuFrame.Texture, lastDesktopTex);
                     hasLastDesktop = true;
-                    encoder.EncodeTexture(
-                        lastDesktopTex,
-                        sw.Elapsed,
-                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    EncodeDesktopWithCursorAndScale(lastDesktopTex, sw.Elapsed);
                     lastEncodeAt = sw.Elapsed;
                     telemetry?.RecordEncodedFrame(cursorOnly: false);
                 }
@@ -306,10 +338,7 @@ internal sealed class GpuDirectSegmentRunner
                 if (shouldEncode)
                 {
                     var pts = sw.Elapsed;
-                    encoder.EncodeTexture(
-                        lastDesktopTex,
-                        pts,
-                        target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                    EncodeDesktopWithCursorAndScale(lastDesktopTex, pts);
                     wroteFrame = true;
                     lastEncodeAt = pts;
                     telemetry?.RecordEncodedFrame(cursorOnly: cursorChanged && !hasImageUpdate);
@@ -334,10 +363,7 @@ internal sealed class GpuDirectSegmentRunner
 
             if (hasLastDesktop)
             {
-                encoder.EncodeTexture(
-                    lastDesktopTex,
-                    sw.Elapsed,
-                    target => cap.CompositeCursorOnGpuTexture(lastDesktopTex, target));
+                EncodeDesktopWithCursorAndScale(lastDesktopTex, sw.Elapsed);
                 telemetry?.RecordEncodedFrame(cursorOnly: false);
             }
 

@@ -90,6 +90,7 @@ public class SettingsViewModel : INotifyPropertyChanged
     {
         int targetH = preset switch
         {
+            "720p"  => 720,
             "1080p" => 1080,
             "1440p" => 1440,
             "4K"    => 2160,
@@ -131,7 +132,7 @@ public class SettingsViewModel : INotifyPropertyChanged
 
     public List<string> QualityOptions    { get; } = new() { "Düşük", "Orta", "Yüksek" };
     public List<int>    FpsOptions        { get; } = new() { 30, 60, 120 };
-    public List<string> ResolutionOptions { get; } = new() { "Native", "1080p", "1440p", "4K" };
+    public List<string> ResolutionOptions { get; } = new() { "Native", "720p", "1080p", "1440p", "4K" };
 
     // ─── Komutlar ─────────────────────────────────────────────────────────────
     public RelayCommand BrowseFolderCommand { get; }
