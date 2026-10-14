@@ -28,10 +28,9 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
 
         SettingsSvc.Load();
-        EncoderSvc.FindFFmpeg();
-
-        // Donanım encoder tespitini arka planda yap (3 sn'lik freeze'i önler)
-        _ = EncoderSvc.PrewarmEncoderDetectionAsync(SettingsSvc.Settings.HardwareAcceleration);
+        SettingsSvc.Settings.EnableGpuDirectPipeline = true;
+        SettingsSvc.Settings.HardwareAcceleration = true;
+        SettingsSvc.Settings.EnablePerformanceAdaptiveScaling = true;
 
         RecordingSvc = new RecordingService(EncoderSvc, AudioSvc, FileSvc);
         MainVM       = new MainViewModel(SettingsSvc, RecordingSvc, FileSvc, HotkeySvc);

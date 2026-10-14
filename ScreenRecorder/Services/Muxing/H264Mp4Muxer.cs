@@ -185,6 +185,9 @@ internal sealed class H264Mp4Muxer : IDisposable
             WriteAscii(payload, "mp41");
         });
 
+    public static bool TryProbeSegmentStructure(string path) =>
+        File.Exists(path) && TryParseOwnMp4Segment(path, out _);
+
     public static bool TryConcatenateSegments(IReadOnlyList<string> segmentPaths, string outputPath)
     {
         if (segmentPaths.Count == 0)

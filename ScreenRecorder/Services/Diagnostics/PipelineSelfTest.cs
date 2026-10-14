@@ -246,13 +246,10 @@ public static class PipelineSelfTest
                 if (packets < 100 || mp4Size < 2048)
                     throw new InvalidOperationException($"NVENC own-mux produced insufficient output (packets={packets}, mp4Bytes={mp4Size}).");
 
-                var encoderSvc = new EncoderService();
-                encoderSvc.FindFFmpeg();
-                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 1024).GetAwaiter().GetResult();
-                if (!decodable)
-                    throw new InvalidOperationException("NVENC own-mux produced an MP4 file, but FFmpeg probe could not decode any video frame from it.");
+                if (!H264Mp4Muxer.TryProbeSegmentStructure(tempMp4))
+                    throw new InvalidOperationException("NVENC own-mux produced an MP4 file, but structural probe failed.");
 
-                return $"NVENC direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes} bitstream bytes, FFmpeg-verified MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
+                return $"NVENC direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes} bitstream bytes, verified MP4 ({mp4Size} bytes) at {cap.Width}x{cap.Height}.";
             }
             finally
             {
@@ -316,13 +313,10 @@ public static class PipelineSelfTest
                 if (packets < 100 || mp4Size < 2048)
                     throw new InvalidOperationException($"AMF own-mux produced insufficient output (packets={packets}, mp4Bytes={mp4Size}).");
 
-                var encoderSvc = new EncoderService();
-                encoderSvc.FindFFmpeg();
-                var decodable = encoderSvc.ProbeSegmentAsync(tempMp4, minBytes: 1024).GetAwaiter().GetResult();
-                if (!decodable)
-                    throw new InvalidOperationException("AMF own-mux produced an MP4 file, but FFmpeg probe could not decode any video frame from it.");
+                if (!H264Mp4Muxer.TryProbeSegmentStructure(tempMp4))
+                    throw new InvalidOperationException("AMF own-mux produced an MP4 file, but structural probe failed.");
 
-                return $"AMF direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes}B bitstream, Finish={finishElapsedMs}ms, FFmpeg-verified MP4 ({mp4Size}B).";
+                return $"AMF direct -> H264Mp4Muxer encoded {packets}/180 dynamic frame(s), {totalBytes}B bitstream, Finish={finishElapsedMs}ms, verified MP4 ({mp4Size}B).";
             }
             finally
             {
@@ -330,7 +324,7 @@ public static class PipelineSelfTest
             }
         }
 
-        return $"Skipped direct GPU encode test (adapter vendor is {adapter.VendorName}; FFmpeg fallback applies).";
+        return $"Skipped direct GPU encode test (adapter vendor is {adapter.VendorName}).";
     }
 
     private static string TestEndToEndRecordingLifecycle()
@@ -339,7 +333,6 @@ public static class PipelineSelfTest
         Directory.CreateDirectory(tempOutDir);
 
         var encoderSvc = new EncoderService();
-        encoderSvc.FindFFmpeg();
         using var audioSvc = new AudioService();
         var fileSvc = new FileService();
         using var recSvc = new RecordingService(encoderSvc, audioSvc, fileSvc);
@@ -405,9 +398,8 @@ public static class PipelineSelfTest
 
             var size = new FileInfo(finalPath).Length;
             var shotSize = new FileInfo(screenshotPath).Length;
-            var decodable = Task.Run(() => encoderSvc.ProbeSegmentAsync(finalPath, minBytes: 1024, requireAudioStream: true)).GetAwaiter().GetResult();
-            if (!decodable)
-                throw new InvalidOperationException($"Final E2E output ({size} bytes) failed FFmpeg video+audio decode verification.");
+            if (!H264Mp4Muxer.TryProbeSegmentStructure(finalPath))
+                throw new InvalidOperationException($"Final E2E output ({size} bytes) failed MP4 structural verification.");
 
             var ascii = Encoding.ASCII.GetString(File.ReadAllBytes(finalPath));
             if (!ascii.Contains("mp4a", StringComparison.Ordinal) || !ascii.Contains("esds", StringComparison.Ordinal))

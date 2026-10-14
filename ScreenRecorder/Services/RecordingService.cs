@@ -59,6 +59,9 @@ public sealed class RecordingService : IDisposable
 
     public async Task StartAsync(AppSettings settings)
     {
+        settings.EnableGpuDirectPipeline = true;
+        settings.HardwareAcceleration = true;
+        settings.EnablePerformanceAdaptiveScaling = true;
         _settings = settings;
         _tempDir = _files.CreateTempDirectory();
         _videoSegments.Clear();
@@ -66,24 +69,13 @@ public sealed class RecordingService : IDisposable
         _segIdx = 0;
         Interlocked.Exchange(ref _adaptivePreferFastPreset, 0);
         _gpuDirect.Reset(settings);
-        _debugLiveMuxActive = EnableDebugLiveMux && (settings.MicrophoneEnabled || settings.SystemAudioEnabled) && !_gpuDirect.IsRequested;
-
-        if (!_gpuDirect.IsRequested && _encoder.FindFFmpeg() == null)
-        {
-            var err = RecordingDiagnostics.ReportError(
-                DiagnosticStage.Startup,
-                "FFmpeg bulunamadi. ffmpeg.exe dosyasini uygulama klasorune koyun veya PATH'e ekleyin.");
-            throw new InvalidOperationException(err.Summary);
-        }
+        _debugLiveMuxActive = false;
 
         await Task.Run(() =>
         {
             GetScreenDimensions(settings.MonitorIndex, out _screenW, out _screenH);
             ComputeOutputDimensions(_screenW, _screenH, settings.OutputResolution, out _outW, out _outH);
-            if (!_gpuDirect.IsRequested)
-                _encoderName = _encoder.DetectBestEncoder(settings.HardwareAcceleration);
-            else
-                _encoderName = "nvenc-direct";
+            _encoderName = "gpu-direct";
         });
 
         IsRunning = true;
