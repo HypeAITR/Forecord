@@ -1,4 +1,5 @@
 using ScreenRecorder.Services;
+using ScreenRecorder.Services.Diagnostics;
 using ScreenRecorder.ViewModels;
 
 namespace ScreenRecorder;
@@ -17,6 +18,13 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        if (e.Args.Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
+        {
+            var report = PipelineSelfTest.RunAll();
+            Environment.Exit(report.AllPassed ? 0 : 1);
+            return;
+        }
+
         base.OnStartup(e);
 
         SettingsSvc.Load();

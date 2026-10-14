@@ -247,14 +247,14 @@ public class EncoderService
     // only when the file has at least one decodable video packet. Catches the
     // "48-byte shell" failure mode where the live-mux ffmpeg exited before any
     // frame reached the muxer (file has ftyp+free atoms but no moov/mdat).
-    public async Task<bool> ProbeSegmentAsync(string filePath)
+    public async Task<bool> ProbeSegmentAsync(string filePath, int minBytes = 4096)
     {
         try
         {
             if (_ffmpegPath == null || !File.Exists(filePath)) return false;
             // A valid MP4 with any encoded frame is at least a few KB even with
-            // the highest QP. Anything below 4 KB is almost certainly a shell.
-            if (new FileInfo(filePath).Length < 4096) return false;
+            // the highest QP. Anything below minBytes is almost certainly a shell.
+            if (new FileInfo(filePath).Length < minBytes) return false;
 
             var psi = new ProcessStartInfo
             {
