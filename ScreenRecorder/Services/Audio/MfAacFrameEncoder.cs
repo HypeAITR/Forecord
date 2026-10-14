@@ -42,29 +42,50 @@ internal sealed class MfAacFrameEncoder : IDisposable
         var comType = Type.GetTypeFromCLSID(ClsidAacMfTransform, throwOnError: true)!;
         _transform = (IMFTransform)Activator.CreateInstance(comType)!;
 
-        // 1. Configure PCM input type
-        var inputType = MediaFoundationApi.CreateMediaType();
-        inputType.SetGUID(MfMtMajorType, MfMediaTypeAudio);
-        inputType.SetGUID(MfMtSubtype, MfAudioFormatPcm);
-        inputType.SetUINT32(MfMtAudioBitsPerSample, 16);
-        inputType.SetUINT32(MfMtAudioSamplesPerSecond, sampleRate);
-        inputType.SetUINT32(MfMtAudioNumChannels, channels);
-        _transform.SetInputType(0, inputType, 0);
-        Marshal.ReleaseComObject(inputType);
+        try
+        {
+            // 1. Configure PCM input type
+            var inputType = MediaFoundationApi.CreateMediaType();
+            try
+            {
+                inputType.SetGUID(MfMtMajorType, MfMediaTypeAudio);
+                inputType.SetGUID(MfMtSubtype, MfAudioFormatPcm);
+                inputType.SetUINT32(MfMtAudioBitsPerSample, 16);
+                inputType.SetUINT32(MfMtAudioSamplesPerSecond, sampleRate);
+                inputType.SetUINT32(MfMtAudioNumChannels, channels);
+                _transform.SetInputType(0, inputType, 0);
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(inputType);
+            }
 
-        // 2. Select AAC output type using NAudio's MediaFoundationEncoder.SelectMediaType
-        var selectedMediaType = MediaFoundationEncoder.SelectMediaType(
-            AudioSubtypes.MFAudioFormat_AAC,
-            new WaveFormat(sampleRate, 16, channels),
-            bitrate);
+            // 2. Select AAC output type using NAudio's MediaFoundationEncoder.SelectMediaType
+            var selectedMediaType = MediaFoundationEncoder.SelectMediaType(
+                AudioSubtypes.MFAudioFormat_AAC,
+                new WaveFormat(sampleRate, 16, channels),
+                bitrate);
 
-        if (selectedMediaType == null)
-            throw new InvalidOperationException("MediaFoundationEncoder.SelectMediaType returned null for AAC.");
+            if (selectedMediaType == null)
+                throw new InvalidOperationException("MediaFoundationEncoder.SelectMediaType returned null for AAC.");
 
-        _transform.SetOutputType(0, selectedMediaType.MediaFoundationObject, 0);
+            try
+            {
+                _transform.SetOutputType(0, selectedMediaType.MediaFoundationObject, 0);
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(selectedMediaType.MediaFoundationObject);
+            }
 
-        _transform.ProcessMessage(MFT_MESSAGE_TYPE.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero);
-        _transform.ProcessMessage(MFT_MESSAGE_TYPE.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero);
+            _transform.ProcessMessage(MFT_MESSAGE_TYPE.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero);
+            _transform.ProcessMessage(MFT_MESSAGE_TYPE.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero);
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     public void ProcessPcmChunk(byte[] pcmBytes, long frameTime100Ns, Action<byte[]> onAacPacket)

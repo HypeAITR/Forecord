@@ -225,6 +225,8 @@ public sealed class RecordingService : IDisposable
             }
 
             var outputPath = _files.GenerateOutputPath(_settings.OutputDirectory);
+            var dirToClean = _tempDir;
+            _tempDir = "";
 
             if (_debugLiveMuxActive)
             {
@@ -238,7 +240,8 @@ public sealed class RecordingService : IDisposable
                     throw new InvalidOperationException("Dosya yazilamadi (live mux concat basarisiz).");
                 }
 
-                _ = Task.Run(() => _files.CleanupTemp(_tempDir));
+                if (!string.IsNullOrEmpty(dirToClean))
+                    _ = Task.Run(() => _files.CleanupTemp(dirToClean));
                 return outputPath;
             }
 
@@ -250,7 +253,8 @@ public sealed class RecordingService : IDisposable
             if (validVideoSegments.Count == 1 && micFiles.Count == 0 && sysFiles.Count == 0)
             {
                 File.Copy(validVideoSegments[0], outputPath, true);
-                _ = Task.Run(() => _files.CleanupTemp(_tempDir));
+                if (!string.IsNullOrEmpty(dirToClean))
+                    _ = Task.Run(() => _files.CleanupTemp(dirToClean));
                 return outputPath;
             }
 
@@ -262,7 +266,8 @@ public sealed class RecordingService : IDisposable
                 RecordingDiagnostics.Info(
                     DiagnosticStage.SegmentConcat,
                     $"Concatenated {validVideoSegments.Count} GPU-Direct segments natively via H264Mp4Muxer: {outputPath}");
-                _ = Task.Run(() => _files.CleanupTemp(_tempDir));
+                if (!string.IsNullOrEmpty(dirToClean))
+                    _ = Task.Run(() => _files.CleanupTemp(dirToClean));
                 return outputPath;
             }
 
@@ -275,7 +280,8 @@ public sealed class RecordingService : IDisposable
                 throw new InvalidOperationException("Dosya yazilamadi (ffmpeg birlestirme basarisiz).");
             }
 
-            _ = Task.Run(() => _files.CleanupTemp(_tempDir));
+            if (!string.IsNullOrEmpty(dirToClean))
+                _ = Task.Run(() => _files.CleanupTemp(dirToClean));
             return outputPath;
         }
         finally

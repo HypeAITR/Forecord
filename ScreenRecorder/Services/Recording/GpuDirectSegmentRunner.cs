@@ -175,6 +175,7 @@ internal sealed class GpuDirectSegmentRunner
         var outW = OutputWidth > 0 ? OutputWidth : cap.Width;
         var outH = OutputHeight > 0 ? OutputHeight : cap.Height;
         var needsScaling = outW != cap.Width || outH != cap.Height;
+        var deleteEmptySegment = false;
 
         try
         {
@@ -426,7 +427,7 @@ internal sealed class GpuDirectSegmentRunner
             }
             else
             {
-                try { if (File.Exists(segmentPath)) File.Delete(segmentPath); } catch { }
+                deleteEmptySegment = true;
             }
         }
         catch (Exception ex)
@@ -438,6 +439,11 @@ internal sealed class GpuDirectSegmentRunner
                 $"GPU direct mux failed for segment {segmentPath}",
                 ex);
             try { File.WriteAllText(segmentPath + ".ownmux.error.txt", ex.ToString()); } catch { }
+            deleteEmptySegment = true;
+        }
+
+        if (deleteEmptySegment)
+        {
             try { if (File.Exists(segmentPath)) File.Delete(segmentPath); } catch { }
         }
     }

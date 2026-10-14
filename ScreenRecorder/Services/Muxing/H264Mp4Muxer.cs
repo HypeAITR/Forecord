@@ -188,8 +188,17 @@ internal sealed class H264Mp4Muxer : IDisposable
             WriteAscii(payload, "mp41");
         });
 
-    public static bool TryProbeSegmentStructure(string path) =>
-        File.Exists(path) && TryParseOwnMp4Segment(path, out _);
+    public static bool TryProbeSegmentStructure(string path)
+    {
+        try
+        {
+            return File.Exists(path) && TryParseOwnMp4Segment(path, out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static bool TryConcatenateSegments(IReadOnlyList<string> segmentPaths, string outputPath)
     {
@@ -398,9 +407,11 @@ internal sealed class H264Mp4Muxer : IDisposable
     private static bool TryParseOwnMp4Segment(string path, out ParsedSegment result)
     {
         result = null!;
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        if (fs.Length < 128)
-            return false;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (fs.Length < 128)
+                return false;
 
         // Locate moov box at the end of the file without loading mdat into RAM!
         long offset = 0;
@@ -495,14 +506,21 @@ internal sealed class H264Mp4Muxer : IDisposable
                                 var avccPos = entryPayloadPos + 78;
                                 var avccLen = (int)BinaryPrimitives.ReadUInt32BigEndian(moovBytes.AsSpan(avccPos, 4));
                                 var avccType = Encoding.ASCII.GetString(moovBytes, avccPos + 4, 4);
-                                if (avccType == "avcC" && avccPos + avccLen <= entryPayloadPos + entryPayloadLen)
+                                if (avccType == "avcC" && avccPos + avccLen <= entryPayloadPos + entryPayloadLen && avccLen >= 16)
                                 {
                                     var avcc = moovBytes.AsSpan(avccPos + 8, avccLen - 8);
-                                    var spsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(6, 2));
-                                    sps = avcc.Slice(8, spsLen).ToArray();
-                                    var ppsCountPos = 8 + spsLen;
-                                    var ppsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(ppsCountPos + 1, 2));
-                                    pps = avcc.Slice(ppsCountPos + 3, ppsLen).ToArray();
+                                    if (avcc.Length >= 8)
+                                    {
+                                        var spsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(6, 2));
+                                        var ppsCountPos = 8 + spsLen;
+                                        if (ppsCountPos + 3 <= avcc.Length)
+                                        {
+                                            sps = avcc.Slice(8, spsLen).ToArray();
+                                            var ppsLen = BinaryPrimitives.ReadUInt16BigEndian(avcc.Slice(ppsCountPos + 1, 2));
+                                            if (ppsCountPos + 3 + ppsLen <= avcc.Length)
+                                                pps = avcc.Slice(ppsCountPos + 3, ppsLen).ToArray();
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -598,6 +616,11 @@ internal sealed class H264Mp4Muxer : IDisposable
             audioSampleRate,
             audioChannels);
         return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void ParseBoxesRecursive(
@@ -629,8 +652,11 @@ internal sealed class H264Mp4Muxer : IDisposable
     {
         try
         {
-            if (!_finished && _samples.Count > 0)
+            if (!_finished && _samples.Count > 0 && _sps is { Length: >= 4 } && _pps is { Length: > 0 })
                 Finish();
+        }
+        catch
+        {
         }
         finally
         {
