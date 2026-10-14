@@ -82,7 +82,9 @@ public static class PipelineSelfTest
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "Forecord", "selftest");
         Directory.CreateDirectory(tempDir);
-        var mp4Path = Path.Combine(tempDir, $"mux_test_{Guid.NewGuid():N}.mp4");
+        var mp4Path1 = Path.Combine(tempDir, $"mux_test1_{Guid.NewGuid():N}.mp4");
+        var mp4Path2 = Path.Combine(tempDir, $"mux_test2_{Guid.NewGuid():N}.mp4");
+        var concatPath = Path.Combine(tempDir, $"mux_concat_{Guid.NewGuid():N}.mp4");
 
         try
         {
@@ -99,37 +101,44 @@ public static class PipelineSelfTest
                 0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x24, 0x6C
             };
 
-            using (var muxer = new H264Mp4Muxer(mp4Path, 1920, 1080, 60))
+            // Minimal valid raw AAC-LC silent frame (CPE stereo silence)
+            byte[] silentAac = { 0x21, 0x10, 0x04, 0x60, 0x8C, 0x1C };
+
+            foreach (var p in new[] { mp4Path1, mp4Path2 })
             {
+                using var muxer = new H264Mp4Muxer(p, 1920, 1080, 60);
+                muxer.ConfigureAudio(48000, 2);
                 muxer.AddAnnexBPacket(annexBIFrame, TimeSpan.Zero, TimeSpan.FromMilliseconds(16.67), "IDR");
+                muxer.AddAudioPacket(silentAac, 1024);
                 muxer.AddAnnexBPacket(annexBPFrame, TimeSpan.FromMilliseconds(16.67), TimeSpan.FromMilliseconds(16.67), "P");
+                muxer.AddAudioPacket(silentAac, 1024);
                 muxer.Finish();
             }
 
-            if (!File.Exists(mp4Path))
-                throw new InvalidOperationException("MP4 output file was not created.");
+            if (!H264Mp4Muxer.TryConcatenateSegments(new[] { mp4Path1, mp4Path2 }, concatPath))
+                throw new InvalidOperationException("TryConcatenateSegments failed on dual-track (video+audio) segments.");
 
-            var bytes = File.ReadAllBytes(mp4Path);
-            if (bytes.Length < 128)
-                throw new InvalidOperationException($"MP4 output is unexpectedly small ({bytes.Length} bytes).");
-
-            var ftypTag = Encoding.ASCII.GetString(bytes, 4, 4);
-            if (ftypTag != "ftyp")
-                throw new InvalidOperationException($"Expected 'ftyp' box at offset 4, found '{ftypTag}'.");
+            var bytes = File.ReadAllBytes(concatPath);
+            if (bytes.Length < 256)
+                throw new InvalidOperationException($"Concatenated MP4 output is unexpectedly small ({bytes.Length} bytes).");
 
             var ascii = Encoding.ASCII.GetString(bytes);
             if (!ascii.Contains("mdat", StringComparison.Ordinal) ||
                 !ascii.Contains("moov", StringComparison.Ordinal) ||
-                !ascii.Contains("avcC", StringComparison.Ordinal))
+                !ascii.Contains("avcC", StringComparison.Ordinal) ||
+                !ascii.Contains("mp4a", StringComparison.Ordinal) ||
+                !ascii.Contains("esds", StringComparison.Ordinal))
             {
-                throw new InvalidOperationException("MP4 is missing required mdat/moov/avcC boxes.");
+                throw new InvalidOperationException("MP4 is missing required mdat/moov/avcC/mp4a/esds boxes.");
             }
 
-            return $"Valid MP4 structure verified ({bytes.Length} bytes, ftyp+mdat+moov+avcC).";
+            return $"Valid dual-track (H.264+AAC) MP4 & native segment concat verified ({bytes.Length} bytes, avcC+mp4a+esds).";
         }
         finally
         {
-            try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+            try { if (File.Exists(mp4Path1)) File.Delete(mp4Path1); } catch { }
+            try { if (File.Exists(mp4Path2)) File.Delete(mp4Path2); } catch { }
+            try { if (File.Exists(concatPath)) File.Delete(concatPath); } catch { }
         }
     }
 
