@@ -24,6 +24,17 @@ internal sealed class GpuDirectSegmentRunner
     public string? LastError { get; private set; }
     public int OutputWidth { get; private set; }
     public int OutputHeight { get; private set; }
+    private LiveAacAudioPipeline? _activeLiveAudio;
+
+    public bool TryUpdateLiveAudioSources(bool micEnabled, bool sysEnabled, string? micDeviceId)
+    {
+        var audio = Volatile.Read(ref _activeLiveAudio);
+        if (audio == null)
+            return false;
+
+        audio.UpdateAudioSources(micEnabled, sysEnabled, micDeviceId);
+        return true;
+    }
 
     public void Reset(AppSettings settings)
     {
@@ -169,14 +180,12 @@ internal sealed class GpuDirectSegmentRunner
         {
             using var muxer = new H264Mp4Muxer(segmentPath, outW, outH, settings.Fps);
             using var encoder = CreateEncoder();
-            using var liveAudio = (settings.MicrophoneEnabled || settings.SystemAudioEnabled)
-                ? new LiveAacAudioPipeline(
-                    muxer,
-                    sw,
-                    settings.MicrophoneEnabled,
-                    settings.SystemAudioEnabled,
-                    settings.MicrophoneDeviceId)
-                : null;
+            using var liveAudio = new LiveAacAudioPipeline(
+                muxer,
+                sw,
+                settings.MicrophoneEnabled,
+                settings.SystemAudioEnabled,
+                settings.MicrophoneDeviceId);
             using var scaler = needsScaling ? new D3D11TextureScaler(cap.Device, outW, outH) : null;
             using var cursorCompositeTex = needsScaling
                 ? new SharpDX.Direct3D11.Texture2D(
@@ -273,6 +282,7 @@ internal sealed class GpuDirectSegmentRunner
                     settings.Quality,
                     segmentPath));
 
+            Volatile.Write(ref _activeLiveAudio, liveAudio);
             liveAudio?.Start();
 
             var hasLastDesktop = false;
@@ -318,7 +328,21 @@ internal sealed class GpuDirectSegmentRunner
                 var t0 = sw.Elapsed;
                 var wroteFrame = false;
 
-                var acquiredGpuFrame = cap.TryAcquireGpuFrame(out var gpuFrame, timeoutMs: 0);
+                DesktopGpuFrame? gpuFrame = null;
+                bool acquiredGpuFrame;
+                try
+                {
+                    acquiredGpuFrame = cap.TryAcquireGpuFrame(out gpuFrame, timeoutMs: 0);
+                }
+                catch (DeviceLostException ex)
+                {
+                    RecordingDiagnostics.ReportError(
+                        DiagnosticStage.CaptureInit,
+                        "DXGI device lost during GPU-Direct capture; finalizing current segment cleanly.",
+                        ex);
+                    break;
+                }
+
                 var hasImageUpdate = false;
                 var cursorChanged = false;
 
@@ -358,7 +382,7 @@ internal sealed class GpuDirectSegmentRunner
                     lastEncodeAt = pts;
                     telemetry?.RecordEncodedFrame(cursorOnly: cursorChanged && !hasImageUpdate);
                 }
-                else if (acquiredGpuFrame)
+                else
                 {
                     skippedFrames++;
                     telemetry?.RecordSkippedIdleFrame();
@@ -376,21 +400,38 @@ internal sealed class GpuDirectSegmentRunner
                     Thread.Sleep((int)remaining.TotalMilliseconds);
             }
 
-            if (hasLastDesktop)
+            if (hasLastDesktop && (sw.Elapsed - lastEncodeAt) > TimeSpan.FromMilliseconds(5))
             {
-                EncodeDesktopWithCursorAndScale(lastDesktopTex, sw.Elapsed);
-                telemetry?.RecordEncodedFrame(cursorOnly: false);
+                try
+                {
+                    EncodeDesktopWithCursorAndScale(lastDesktopTex, sw.Elapsed);
+                    telemetry?.RecordEncodedFrame(cursorOnly: false);
+                }
+                catch
+                {
+                    // Ignore if exited due to DeviceLostException
+                }
             }
 
+            Volatile.Write(ref _activeLiveAudio, null);
             liveAudio?.StopAndFlush();
             encoder.FinishAsync().GetAwaiter().GetResult();
-            muxer.Finish();
-            RecordingDiagnostics.Info(
-                DiagnosticStage.MuxFinish,
-                $"OwnMux segment finished acquired={acquiredFrames} encodedPackets={Interlocked.Read(ref encodedCallbacks)} audioPackets={liveAudio?.EmittedAacFrames ?? 0} skippedIdle={skippedFrames} path={segmentPath}");
+
+            if (muxer.SampleCount > 0)
+            {
+                muxer.Finish();
+                RecordingDiagnostics.Info(
+                    DiagnosticStage.MuxFinish,
+                    $"OwnMux segment finished acquired={acquiredFrames} encodedPackets={Interlocked.Read(ref encodedCallbacks)} audioPackets={liveAudio?.EmittedAacFrames ?? 0} skippedIdle={skippedFrames} path={segmentPath}");
+            }
+            else
+            {
+                try { if (File.Exists(segmentPath)) File.Delete(segmentPath); } catch { }
+            }
         }
         catch (Exception ex)
         {
+            Volatile.Write(ref _activeLiveAudio, null);
             LastError = ex.Message;
             RecordingDiagnostics.ReportError(
                 DiagnosticStage.EncodeFrame,

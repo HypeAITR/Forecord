@@ -183,7 +183,15 @@ public sealed class RecordingService : IDisposable
             var validVideoSegments = new List<string>();
             if (_gpuDirect.IsActive)
             {
-                validVideoSegments.AddRange(sizeOk);
+                foreach (var seg in sizeOk)
+                {
+                    if (ScreenRecorder.Services.Muxing.H264Mp4Muxer.TryProbeSegmentStructure(seg))
+                        validVideoSegments.Add(seg);
+                    else
+                        RecordingDiagnostics.ReportError(
+                            DiagnosticStage.SegmentProbe,
+                            $"Corrupted GPU-Direct segment skipped during stop: {seg}");
+                }
             }
             else
             {
@@ -318,7 +326,7 @@ public sealed class RecordingService : IDisposable
         if (_encoder.FindFFmpeg() == null)
             throw new InvalidOperationException(
                 "FFmpeg bulunamadi.\nffmpeg.exe dosyasini uygulama klasorune koyun veya PATH'e ekleyin.");
-        if (_encoderName == "nvenc-direct")
+        if (_encoderName is "nvenc-direct" or "gpu-direct")
             _encoderName = _encoder.DetectBestEncoder(_settings.HardwareAcceleration);
 
         await Task.Run(() =>
@@ -403,6 +411,15 @@ public sealed class RecordingService : IDisposable
         try
         {
             if (!IsRunning || IsPaused) return;
+            if (_gpuDirect.IsActive &&
+                _gpuDirect.TryUpdateLiveAudioSources(
+                    _settings.MicrophoneEnabled,
+                    _settings.SystemAudioEnabled,
+                    _settings.MicrophoneDeviceId))
+            {
+                return;
+            }
+
             await Task.Run(EndCurrentSegment);
             await BeginSegmentAsync();
         }

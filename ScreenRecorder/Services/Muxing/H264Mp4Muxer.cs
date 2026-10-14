@@ -96,21 +96,14 @@ internal sealed class H264Mp4Muxer : IDisposable
         }
     }
 
+    private static readonly byte[] SilentStereoAacFrame = { 0x21, 0x10, 0x04, 0x60, 0x8C, 0x1C };
+
     public void AddAnnexBPacket(byte[] packet, TimeSpan presentationTime, TimeSpan duration, string pictureType)
     {
         if (packet.Length == 0)
             return;
 
         var sampleBytes = ConvertAnnexBToAvcc(packet, out var sps, out var pps, out var hasIdr);
-        if (sampleBytes.Length == 0)
-            return;
-
-        var sampleDuration = duration > TimeSpan.Zero
-            ? ToDurationUnits(duration)
-            : _defaultDuration;
-        var key = hasIdr ||
-                  pictureType.Equals("IDR", StringComparison.OrdinalIgnoreCase) ||
-                  pictureType.Equals("I", StringComparison.OrdinalIgnoreCase);
 
         lock (_writeLock)
         {
@@ -119,6 +112,16 @@ internal sealed class H264Mp4Muxer : IDisposable
 
             _sps ??= sps;
             _pps ??= pps;
+
+            if (sampleBytes.Length == 0)
+                return;
+
+            var sampleDuration = duration > TimeSpan.Zero
+                ? ToDurationUnits(duration)
+                : _defaultDuration;
+            var key = hasIdr ||
+                      pictureType.Equals("IDR", StringComparison.OrdinalIgnoreCase) ||
+                      pictureType.Equals("I", StringComparison.OrdinalIgnoreCase);
 
             if (_lastPts.HasValue && presentationTime > _lastPts.Value && _samples.Count > 0)
             {
@@ -152,7 +155,7 @@ internal sealed class H264Mp4Muxer : IDisposable
 
             var ftyp = BuildFtypBox();
             var mdatDataStart = (ulong)MdatPayloadStartOffset;
-            uint videoDuration = 0;
+            ulong videoDuration = 0;
             for (var i = 0; i < _samples.Count; i++)
                 videoDuration += _samples[i].Duration;
 
@@ -212,6 +215,20 @@ internal sealed class H264Mp4Muxer : IDisposable
             var audioChannels = 2;
             long totalMdatPayloadBytes = 0;
 
+            var parsedSegments = new List<(string Path, ParsedSegment Parsed)>(segmentPaths.Count);
+            var anySegmentHasAudio = false;
+            foreach (var segPath in segmentPaths)
+            {
+                if (!File.Exists(segPath) || !TryParseOwnMp4Segment(segPath, out var parsed))
+                    return false;
+
+                if (parsed.AudioSamples.Count > 0)
+                    anySegmentHasAudio = true;
+                if (parsed.AudioSampleRate > 0) audioSampleRate = parsed.AudioSampleRate;
+                if (parsed.AudioChannels > 0) audioChannels = parsed.AudioChannels;
+                parsedSegments.Add((segPath, parsed));
+            }
+
             using (var output = new FileStream(
                        outputPath,
                        FileMode.Create,
@@ -221,18 +238,16 @@ internal sealed class H264Mp4Muxer : IDisposable
             {
                 output.Write(new byte[MdatPayloadStartOffset]);
 
-                foreach (var segPath in segmentPaths)
-                {
-                    if (!File.Exists(segPath) || !TryParseOwnMp4Segment(segPath, out var parsed))
-                        return false;
+                long silentPayloadOffset = -1;
 
+                foreach (var (segPath, parsed) in parsedSegments)
+                {
                     firstSps ??= parsed.Sps;
                     firstPps ??= parsed.Pps;
                     if (width == 0) width = parsed.Width;
                     if (height == 0) height = parsed.Height;
-                    if (parsed.AudioSampleRate > 0) audioSampleRate = parsed.AudioSampleRate;
-                    if (parsed.AudioChannels > 0) audioChannels = parsed.AudioChannels;
 
+                    ulong segVideoDuration = 0;
                     using var segStream = new FileStream(segPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                     foreach (var s in parsed.Samples)
                     {
@@ -241,22 +256,44 @@ internal sealed class H264Mp4Muxer : IDisposable
                         CopyBytes(segStream, output, s.Size);
                         totalMdatPayloadBytes += s.Size;
                         combinedSamples.Add(new Sample(newOffset, s.Size, s.Duration, s.IsKeyframe));
+                        segVideoDuration += s.Duration;
                     }
 
-                    foreach (var a in parsed.AudioSamples)
+                    if (parsed.AudioSamples.Count > 0)
                     {
-                        var newOffset = totalMdatPayloadBytes;
-                        segStream.Position = (long)a.FileOffset;
-                        CopyBytes(segStream, output, a.Size);
-                        totalMdatPayloadBytes += a.Size;
-                        combinedAudioSamples.Add(new AudioSample(newOffset, a.Size, a.Duration));
+                        foreach (var a in parsed.AudioSamples)
+                        {
+                            var newOffset = totalMdatPayloadBytes;
+                            segStream.Position = (long)a.FileOffset;
+                            CopyBytes(segStream, output, a.Size);
+                            totalMdatPayloadBytes += a.Size;
+                            combinedAudioSamples.Add(new AudioSample(newOffset, a.Size, a.Duration));
+                        }
+                    }
+                    else if (anySegmentHasAudio && segVideoDuration > 0)
+                    {
+                        // Pad silent segment with silent AAC frames matching its exact video duration
+                        // so subsequent segments' audio stays perfectly aligned with video!
+                        if (silentPayloadOffset < 0)
+                        {
+                            silentPayloadOffset = totalMdatPayloadBytes;
+                            output.Write(SilentStereoAacFrame);
+                            totalMdatPayloadBytes += SilentStereoAacFrame.Length;
+                        }
+
+                        var totalSilentPcmSamples = (ulong)Math.Round((double)segVideoDuration * audioSampleRate / Timescale);
+                        var silentFramesCount = (int)Math.Max(1UL, (totalSilentPcmSamples + 512) / 1024);
+                        for (var f = 0; f < silentFramesCount; f++)
+                        {
+                            combinedAudioSamples.Add(new AudioSample(silentPayloadOffset, SilentStereoAacFrame.Length, 1024));
+                        }
                     }
                 }
 
                 if (combinedSamples.Count == 0 || firstSps == null || firstPps == null || width <= 0 || height <= 0)
                     return false;
 
-                uint duration = 0;
+                ulong duration = 0;
                 for (var i = 0; i < combinedSamples.Count; i++)
                     duration += combinedSamples[i].Duration;
 
@@ -299,7 +336,7 @@ internal sealed class H264Mp4Muxer : IDisposable
         List<AudioSample> audioSamples,
         int audioSampleRate,
         int audioChannels,
-        uint duration,
+        ulong duration,
         ulong mdatDataStart)
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"forecord_hdr_{Guid.NewGuid():N}.tmp");
@@ -431,6 +468,7 @@ internal sealed class H264Mp4Muxer : IDisposable
                 var sizes = new List<int>();
                 var offsets = new List<ulong>();
                 var keyframes = new HashSet<int>();
+                var hasStssBox = false;
 
                 ParseBoxesRecursive(moovBytes, pos + 8, pos + size, (boxType, payloadPos, payloadLen) =>
                 {
@@ -488,6 +526,7 @@ internal sealed class H264Mp4Muxer : IDisposable
                     }
                     else if (boxType == "stss" && payloadLen >= 8)
                     {
+                        hasStssBox = true;
                         var entryCount = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
                         var p = 8;
                         for (var i = 0; i < entryCount && p + 4 <= payloadLen; i++, p += 4)
@@ -495,10 +534,19 @@ internal sealed class H264Mp4Muxer : IDisposable
                     }
                     else if (boxType == "stsz" && payloadLen >= 12)
                     {
+                        var fixedSize = (int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
                         var count = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(8, 4));
-                        var p = 12;
-                        for (var i = 0; i < count && p + 4 <= payloadLen; i++, p += 4)
-                            sizes.Add((int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4)));
+                        if (fixedSize > 0)
+                        {
+                            for (var i = 0; i < count; i++)
+                                sizes.Add(fixedSize);
+                        }
+                        else
+                        {
+                            var p = 12;
+                            for (var i = 0; i < count && p + 4 <= payloadLen; i++, p += 4)
+                                sizes.Add((int)BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4)));
+                        }
                     }
                     else if (boxType == "co64" && payloadLen >= 8)
                     {
@@ -506,6 +554,13 @@ internal sealed class H264Mp4Muxer : IDisposable
                         var p = 8;
                         for (var i = 0; i < count && p + 8 <= payloadLen; i++, p += 8)
                             offsets.Add(BinaryPrimitives.ReadUInt64BigEndian(span.Slice(p, 8)));
+                    }
+                    else if (boxType == "stco" && payloadLen >= 8)
+                    {
+                        var count = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
+                        var p = 8;
+                        for (var i = 0; i < count && p + 4 <= payloadLen; i++, p += 4)
+                            offsets.Add(BinaryPrimitives.ReadUInt32BigEndian(span.Slice(p, 4)));
                     }
                 });
 
@@ -519,7 +574,10 @@ internal sealed class H264Mp4Muxer : IDisposable
                     else
                     {
                         for (var i = 0; i < sizes.Count; i++)
-                            parsedVideoSamples.Add(new ParsedSample(offsets[i], sizes[i], durations[i], keyframes.Contains(i)));
+                        {
+                            var isKey = hasStssBox ? keyframes.Contains(i) : true;
+                            parsedVideoSamples.Add(new ParsedSample(offsets[i], sizes[i], durations[i], isKey));
+                        }
                     }
                 }
             }
@@ -580,7 +638,7 @@ internal sealed class H264Mp4Muxer : IDisposable
         }
     }
 
-    private byte[] BuildMoov(uint duration, ulong mdatDataStart) =>
+    private byte[] BuildMoov(ulong duration, ulong mdatDataStart) =>
         Box("moov", moov =>
         {
             var hasAudio = _audioConfigured && _audioSamples.Count > 0;
@@ -590,13 +648,33 @@ internal sealed class H264Mp4Muxer : IDisposable
                 moov.Write(BuildAudioTrak(duration, mdatDataStart));
         });
 
-    private byte[] BuildMvhd(uint duration, uint nextTrackId = 2) =>
-        FullBox("mvhd", 0, 0, payload =>
+    private byte[] BuildMvhd(ulong duration, uint nextTrackId = 2)
+    {
+        if (duration > uint.MaxValue)
+        {
+            return FullBox("mvhd", 1, 0, payload =>
+            {
+                WriteUInt64(payload, 0);
+                WriteUInt64(payload, 0);
+                WriteUInt32(payload, Timescale);
+                WriteUInt64(payload, duration);
+                WriteUInt32(payload, 0x00010000);
+                WriteUInt16(payload, 0x0100);
+                WriteUInt16(payload, 0);
+                WriteUInt32(payload, 0);
+                WriteUInt32(payload, 0);
+                WriteMatrix(payload);
+                for (var i = 0; i < 6; i++) WriteUInt32(payload, 0);
+                WriteUInt32(payload, nextTrackId);
+            });
+        }
+
+        return FullBox("mvhd", 0, 0, payload =>
         {
             WriteUInt32(payload, 0);
             WriteUInt32(payload, 0);
             WriteUInt32(payload, Timescale);
-            WriteUInt32(payload, duration);
+            WriteUInt32(payload, (uint)duration);
             WriteUInt32(payload, 0x00010000);
             WriteUInt16(payload, 0x0100);
             WriteUInt16(payload, 0);
@@ -606,22 +684,45 @@ internal sealed class H264Mp4Muxer : IDisposable
             for (var i = 0; i < 6; i++) WriteUInt32(payload, 0);
             WriteUInt32(payload, nextTrackId);
         });
+    }
 
-    private byte[] BuildTrak(uint duration, ulong mdatDataStart) =>
+    private byte[] BuildTrak(ulong duration, ulong mdatDataStart) =>
         Box("trak", trak =>
         {
             trak.Write(BuildTkhd(duration));
             trak.Write(BuildMdia(duration, mdatDataStart));
         });
 
-    private byte[] BuildTkhd(uint duration) =>
-        FullBox("tkhd", 0, 0x000007, payload =>
+    private byte[] BuildTkhd(ulong duration)
+    {
+        if (duration > uint.MaxValue)
+        {
+            return FullBox("tkhd", 1, 0x000007, payload =>
+            {
+                WriteUInt64(payload, 0);
+                WriteUInt64(payload, 0);
+                WriteUInt32(payload, 1);
+                WriteUInt32(payload, 0);
+                WriteUInt64(payload, duration);
+                WriteUInt32(payload, 0);
+                WriteUInt32(payload, 0);
+                WriteUInt16(payload, 0);
+                WriteUInt16(payload, 0);
+                WriteUInt16(payload, 0);
+                WriteUInt16(payload, 0);
+                WriteMatrix(payload);
+                WriteUInt32(payload, (uint)_width << 16);
+                WriteUInt32(payload, (uint)_height << 16);
+            });
+        }
+
+        return FullBox("tkhd", 0, 0x000007, payload =>
         {
             WriteUInt32(payload, 0);
             WriteUInt32(payload, 0);
             WriteUInt32(payload, 1);
             WriteUInt32(payload, 0);
-            WriteUInt32(payload, duration);
+            WriteUInt32(payload, (uint)duration);
             WriteUInt32(payload, 0);
             WriteUInt32(payload, 0);
             WriteUInt16(payload, 0);
@@ -632,8 +733,9 @@ internal sealed class H264Mp4Muxer : IDisposable
             WriteUInt32(payload, (uint)_width << 16);
             WriteUInt32(payload, (uint)_height << 16);
         });
+    }
 
-    private byte[] BuildMdia(uint duration, ulong mdatDataStart) =>
+    private byte[] BuildMdia(ulong duration, ulong mdatDataStart) =>
         Box("mdia", mdia =>
         {
             mdia.Write(BuildMdhd(duration));
@@ -641,16 +743,31 @@ internal sealed class H264Mp4Muxer : IDisposable
             mdia.Write(BuildMinf(mdatDataStart));
         });
 
-    private byte[] BuildMdhd(uint duration) =>
-        FullBox("mdhd", 0, 0, payload =>
+    private byte[] BuildMdhd(ulong duration)
+    {
+        if (duration > uint.MaxValue)
+        {
+            return FullBox("mdhd", 1, 0, payload =>
+            {
+                WriteUInt64(payload, 0);
+                WriteUInt64(payload, 0);
+                WriteUInt32(payload, Timescale);
+                WriteUInt64(payload, duration);
+                WriteUInt16(payload, 0x55C4);
+                WriteUInt16(payload, 0);
+            });
+        }
+
+        return FullBox("mdhd", 0, 0, payload =>
         {
             WriteUInt32(payload, 0);
             WriteUInt32(payload, 0);
             WriteUInt32(payload, Timescale);
-            WriteUInt32(payload, duration);
+            WriteUInt32(payload, (uint)duration);
             WriteUInt16(payload, 0x55C4);
             WriteUInt16(payload, 0);
         });
+    }
 
     private static byte[] BuildHdlr() =>
         FullBox("hdlr", 0, 0, payload =>
@@ -811,49 +928,85 @@ internal sealed class H264Mp4Muxer : IDisposable
                 WriteUInt64(payload, mdatDataStart + (ulong)sample.Offset);
         });
 
-    private byte[] BuildAudioTrak(uint movieDuration, ulong mdatDataStart)
+    private byte[] BuildAudioTrak(ulong movieDuration, ulong mdatDataStart)
     {
-        uint audioTotalSamples = 0;
+        ulong audioTotalSamples = 0;
         for (var i = 0; i < _audioSamples.Count; i++)
             audioTotalSamples += _audioSamples[i].Duration;
 
-        var tkhdDuration = (uint)Math.Min(
-            uint.MaxValue,
-            Math.Round((double)audioTotalSamples * Timescale / Math.Max(1, _audioSampleRate)));
+        var tkhdDuration = (ulong)Math.Round((double)audioTotalSamples * Timescale / Math.Max(1, _audioSampleRate));
         if (tkhdDuration == 0)
             tkhdDuration = movieDuration;
 
         return Box("trak", trak =>
         {
-            trak.Write(FullBox("tkhd", 0, 0x000007, payload =>
+            if (tkhdDuration > uint.MaxValue)
             {
-                WriteUInt32(payload, 0);
-                WriteUInt32(payload, 0);
-                WriteUInt32(payload, 2); // track_ID = 2
-                WriteUInt32(payload, 0);
-                WriteUInt32(payload, tkhdDuration);
-                WriteUInt32(payload, 0);
-                WriteUInt32(payload, 0);
-                WriteUInt16(payload, 0);
-                WriteUInt16(payload, 0);
-                WriteUInt16(payload, 0x0100); // volume = 1.0
-                WriteUInt16(payload, 0);
-                WriteMatrix(payload);
-                WriteUInt32(payload, 0);
-                WriteUInt32(payload, 0);
-            }));
-
-            trak.Write(Box("mdia", mdia =>
+                trak.Write(FullBox("tkhd", 1, 0x000007, payload =>
+                {
+                    WriteUInt64(payload, 0);
+                    WriteUInt64(payload, 0);
+                    WriteUInt32(payload, 2); // track_ID = 2
+                    WriteUInt32(payload, 0);
+                    WriteUInt64(payload, tkhdDuration);
+                    WriteUInt32(payload, 0);
+                    WriteUInt32(payload, 0);
+                    WriteUInt16(payload, 0);
+                    WriteUInt16(payload, 0);
+                    WriteUInt16(payload, 0x0100); // volume = 1.0
+                    WriteUInt16(payload, 0);
+                    WriteMatrix(payload);
+                    WriteUInt32(payload, 0);
+                    WriteUInt32(payload, 0);
+                }));
+            }
+            else
             {
-                mdia.Write(FullBox("mdhd", 0, 0, payload =>
+                trak.Write(FullBox("tkhd", 0, 0x000007, payload =>
                 {
                     WriteUInt32(payload, 0);
                     WriteUInt32(payload, 0);
-                    WriteUInt32(payload, (uint)_audioSampleRate);
-                    WriteUInt32(payload, audioTotalSamples);
-                    WriteUInt16(payload, 0x55C4);
+                    WriteUInt32(payload, 2); // track_ID = 2
+                    WriteUInt32(payload, 0);
+                    WriteUInt32(payload, (uint)tkhdDuration);
+                    WriteUInt32(payload, 0);
+                    WriteUInt32(payload, 0);
                     WriteUInt16(payload, 0);
+                    WriteUInt16(payload, 0);
+                    WriteUInt16(payload, 0x0100); // volume = 1.0
+                    WriteUInt16(payload, 0);
+                    WriteMatrix(payload);
+                    WriteUInt32(payload, 0);
+                    WriteUInt32(payload, 0);
                 }));
+            }
+
+            trak.Write(Box("mdia", mdia =>
+            {
+                if (audioTotalSamples > uint.MaxValue)
+                {
+                    mdia.Write(FullBox("mdhd", 1, 0, payload =>
+                    {
+                        WriteUInt64(payload, 0);
+                        WriteUInt64(payload, 0);
+                        WriteUInt32(payload, (uint)_audioSampleRate);
+                        WriteUInt64(payload, audioTotalSamples);
+                        WriteUInt16(payload, 0x55C4);
+                        WriteUInt16(payload, 0);
+                    }));
+                }
+                else
+                {
+                    mdia.Write(FullBox("mdhd", 0, 0, payload =>
+                    {
+                        WriteUInt32(payload, 0);
+                        WriteUInt32(payload, 0);
+                        WriteUInt32(payload, (uint)_audioSampleRate);
+                        WriteUInt32(payload, (uint)audioTotalSamples);
+                        WriteUInt16(payload, 0x55C4);
+                        WriteUInt16(payload, 0);
+                    }));
+                }
                 mdia.Write(FullBox("hdlr", 0, 0, payload =>
                 {
                     WriteUInt32(payload, 0);

@@ -28,9 +28,10 @@ internal sealed class LiveAacAudioPipeline : IDisposable
 
     private readonly H264Mp4Muxer _muxer;
     private readonly Stopwatch _clock;
-    private readonly bool _micEnabled;
-    private readonly bool _sysEnabled;
-    private readonly string? _micDeviceId;
+    private volatile bool _micEnabled;
+    private volatile bool _sysEnabled;
+    private string? _micDeviceId;
+    private readonly object _deviceLock = new();
 
     private WasapiCapture? _micCapture;
     private WasapiLoopbackCapture? _sysCapture;
@@ -63,16 +64,16 @@ internal sealed class LiveAacAudioPipeline : IDisposable
 
     public void Start()
     {
-        if (!_micEnabled && !_sysEnabled)
-            return;
-
         _muxer.ConfigureAudio(TargetSampleRate, TargetChannels);
 
-        if (_micEnabled)
-            TryStartMic();
+        lock (_deviceLock)
+        {
+            if (_micEnabled)
+                TryStartMic();
 
-        if (_sysEnabled)
-            TryStartSystem();
+            if (_sysEnabled)
+                TryStartSystem();
+        }
 
         _stopRequested = false;
         _workerThread = new Thread(AudioEncodeWorkerLoop)
@@ -82,6 +83,49 @@ internal sealed class LiveAacAudioPipeline : IDisposable
             Name = "Forecord-LiveAacAudio"
         };
         _workerThread.Start();
+    }
+
+    public void UpdateAudioSources(bool micEnabled, bool sysEnabled, string? micDeviceId)
+    {
+        lock (_deviceLock)
+        {
+            if (_disposed || _stopRequested)
+                return;
+
+            _micDeviceId = micDeviceId;
+
+            if (micEnabled && _micCapture == null)
+            {
+                TryStartMic();
+            }
+            else if (!micEnabled && _micCapture != null)
+            {
+                try { _micCapture.StopRecording(); } catch { }
+                try { _micCapture.Dispose(); } catch { }
+                _micCapture = null;
+                _micBuffer = null;
+                _micResampler = null;
+            }
+
+            if (sysEnabled && _sysCapture == null)
+            {
+                TryStartSystem();
+            }
+            else if (!sysEnabled && _sysCapture != null)
+            {
+                try { _sysCapture.StopRecording(); } catch { }
+                try { _sysCapture.Dispose(); } catch { }
+                _sysCapture = null;
+                _sysBuffer = null;
+                _sysResampler = null;
+                try { _silenceOut?.Stop(); } catch { }
+                try { _silenceOut?.Dispose(); } catch { }
+                _silenceOut = null;
+            }
+
+            _micEnabled = micEnabled;
+            _sysEnabled = sysEnabled;
+        }
     }
 
     public void StopAndFlush()
@@ -99,12 +143,22 @@ internal sealed class LiveAacAudioPipeline : IDisposable
 
     private void TryStartMic()
     {
+        var device = ResolveMicrophoneDevice(_micDeviceId);
+        if (device == null) return;
+
+        if (!TryStartMicWithFormat(device, null))
+        {
+            TryStartMicWithFormat(device, new WaveFormat(TargetSampleRate, 16, TargetChannels));
+        }
+    }
+
+    private bool TryStartMicWithFormat(MMDevice device, WaveFormat? overrideFormat)
+    {
         try
         {
-            var device = ResolveMicrophoneDevice(_micDeviceId);
-            if (device == null) return;
-
-            _micCapture = new WasapiCapture(device);
+            _micCapture = overrideFormat == null
+                ? new WasapiCapture(device)
+                : new WasapiCapture(device, true, 60) { WaveFormat = overrideFormat };
             _micBuffer = new BufferedWaveProvider(_micCapture.WaveFormat)
             {
                 BufferDuration = TimeSpan.FromSeconds(3),
@@ -118,13 +172,22 @@ internal sealed class LiveAacAudioPipeline : IDisposable
                     _micBuffer.AddSamples(e.Buffer, 0, e.BytesRecorded);
             };
             _micCapture.StartRecording();
+            return true;
         }
         catch (Exception ex)
         {
-            RecordingDiagnostics.ReportError(
-                DiagnosticStage.AudioPipe,
-                "Failed to initialize WASAPI microphone for live AAC pipeline.",
-                ex);
+            try { _micCapture?.Dispose(); } catch { }
+            _micCapture = null;
+            _micBuffer = null;
+            _micResampler = null;
+            if (overrideFormat != null)
+            {
+                RecordingDiagnostics.ReportError(
+                    DiagnosticStage.AudioPipe,
+                    "Failed to initialize WASAPI microphone for live AAC pipeline.",
+                    ex);
+            }
+            return false;
         }
     }
 
@@ -252,26 +315,26 @@ internal sealed class LiveAacAudioPipeline : IDisposable
         var count = AacFrameSamplesPerChannel * TargetChannels;
         Array.Clear(scratchA, 0, count);
 
-        // Drift compensation: if a capture ring buffer accumulated more than
-        // 180 ms of audio (e.g. device clock runs slightly faster than QPC),
-        // drop the excess so latency/drift never grows over a 15-min recording.
-        TrimExcessBuffer(_micBuffer);
-        TrimExcessBuffer(_sysBuffer);
-
-        var hasMic = _micResampler != null && _micBuffer != null && _micBuffer.BufferedBytes > 0;
-        var hasSys = _sysResampler != null && _sysBuffer != null && _sysBuffer.BufferedBytes > 0;
-
-        if (hasMic)
+        lock (_deviceLock)
         {
-            _micResampler!.Read(scratchA, 0, count);
-        }
+            TrimExcessBuffer(_micBuffer);
+            TrimExcessBuffer(_sysBuffer);
 
-        if (hasSys)
-        {
-            Array.Clear(scratchB, 0, count);
-            _sysResampler!.Read(scratchB, 0, count);
-            for (var i = 0; i < count; i++)
-                scratchA[i] = Math.Clamp(scratchA[i] + scratchB[i], -1.0f, 1.0f);
+            var hasMic = _micEnabled && _micResampler != null && _micBuffer != null && _micBuffer.BufferedBytes > 0;
+            var hasSys = _sysEnabled && _sysResampler != null && _sysBuffer != null && _sysBuffer.BufferedBytes > 0;
+
+            if (hasMic)
+            {
+                _micResampler!.Read(scratchA, 0, count);
+            }
+
+            if (hasSys)
+            {
+                Array.Clear(scratchB, 0, count);
+                _sysResampler!.Read(scratchB, 0, count);
+                for (var i = 0; i < count; i++)
+                    scratchA[i] = Math.Clamp(scratchA[i] + scratchB[i], -1.0f, 1.0f);
+            }
         }
 
         for (var i = 0; i < count; i++)
@@ -285,9 +348,25 @@ internal sealed class LiveAacAudioPipeline : IDisposable
     private static void TrimExcessBuffer(BufferedWaveProvider? buffer)
     {
         if (buffer == null) return;
-        var maxBytes = buffer.WaveFormat.AverageBytesPerSecond / 5; // 200 ms ceiling
-        if (buffer.BufferedBytes > maxBytes)
-            buffer.ClearBuffer();
+        var avgBytesPerSec = Math.Max(1, buffer.WaveFormat.AverageBytesPerSecond);
+        var maxBytes = avgBytesPerSec / 5; // 200 ms ceiling
+        var buffered = buffer.BufferedBytes;
+        if (buffered <= maxBytes) return;
+
+        var targetBytes = avgBytesPerSec / 10; // keep ~100 ms of audio intact
+        var blockAlign = Math.Max(1, buffer.WaveFormat.BlockAlign);
+        var dropBytes = ((buffered - targetBytes) / blockAlign) * blockAlign;
+        if (dropBytes <= 0) return;
+
+        var discard = new byte[Math.Min(dropBytes, 16384)];
+        var remaining = dropBytes;
+        while (remaining > 0)
+        {
+            var toRead = Math.Min(remaining, discard.Length);
+            var read = buffer.Read(discard, 0, toRead);
+            if (read <= 0) break;
+            remaining -= read;
+        }
     }
 
     private void StartSilenceKeeper(WaveFormat format)

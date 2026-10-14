@@ -49,6 +49,8 @@ float4 PS(VSOut i) : SV_Target
     private readonly Texture2D _outputTexture;
     private readonly RenderTargetView _rtv;
     private readonly RawViewportF _viewport;
+    private Texture2D? _cachedSourceTexture;
+    private ShaderResourceView? _cachedSrv;
     private bool _disposed;
 
     public D3D11TextureScaler(Device device, int outWidth, int outHeight)
@@ -117,7 +119,13 @@ float4 PS(VSOut i) : SV_Target
 
     public Texture2D Scale(Texture2D sourceTexture)
     {
-        using var srv = new ShaderResourceView(_device, sourceTexture);
+        if (!ReferenceEquals(_cachedSourceTexture, sourceTexture) || _cachedSrv == null)
+        {
+            _cachedSrv?.Dispose();
+            _cachedSrv = new ShaderResourceView(_device, sourceTexture);
+            _cachedSourceTexture = sourceTexture;
+        }
+
         var ctx = _device.ImmediateContext;
 
         ctx.InputAssembler.InputLayout = null;
@@ -125,7 +133,7 @@ float4 PS(VSOut i) : SV_Target
         ctx.VertexShader.Set(_vs);
         ctx.PixelShader.Set(_ps);
         ctx.PixelShader.SetSampler(0, _sampler);
-        ctx.PixelShader.SetShaderResource(0, srv);
+        ctx.PixelShader.SetShaderResource(0, _cachedSrv);
         ctx.Rasterizer.State = _rasterizer;
         ctx.Rasterizer.SetViewport(_viewport);
         ctx.OutputMerger.SetBlendState(_blendState);
@@ -145,6 +153,9 @@ float4 PS(VSOut i) : SV_Target
     {
         if (_disposed) return;
         _disposed = true;
+        _cachedSrv?.Dispose();
+        _cachedSrv = null;
+        _cachedSourceTexture = null;
         _rtv.Dispose();
         _outputTexture.Dispose();
         _depthState.Dispose();
